@@ -1,0 +1,8 @@
+.env
+.venv
+.vscode
+.idea
+build
+greeting.md
+node_modules
+http-client.private.env.json
