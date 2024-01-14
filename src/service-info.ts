@@ -124,24 +124,24 @@ export type ServiceInfo = {
 
 const SERVICE_ENDPOINTS: { [s in LLMService]: Record<string, string> } = {
   openai: {
-    openai: `%BASE%/` + config.routeModifier + `openai`,
-    openai2: `%BASE%/`+ config.routeModifier + `openai/turbo-instruct`,
-    "openai-image": `%BASE%/`+ config.routeModifier + `openai-image`,
+    openai: `%BASE%/proxy/` + config.routeModifier + `openai`,
+    openai2: `%BASE%/proxy/`+ config.routeModifier + `openai/turbo-instruct`,
+    "openai-image": `%BASE%/proxy/`+ config.routeModifier + `openai-image`,
   },
   anthropic: {
-    anthropic: `%BASE%/` + config.routeModifier + `anthropic`,
+    anthropic: `%BASE%/proxy/` + config.routeModifier + `anthropic`,
   },
   "google-ai": {
-    "google-ai": `%BASE%/` + config.routeModifier + `google-ai`,
+    "google-ai": `%BASE%/proxy/` + config.routeModifier + `google-ai`,
   },
   "mistral-ai": {
-    "mistral-ai": `%BASE%/` + config.routeModifier + `mistral-ai`,
+    "mistral-ai": `%BASE%/proxy/` + config.routeModifier + `mistral-ai`,
   },
   aws: {
-    aws: `%BASE%` + config.routeModifier + `/aws/claude`,
+    aws: `%BASE%/proxy/` + config.routeModifier + `aws/claude`,
   },
   azure: {
-    azure: `%BASE%` + config.routeModifier + `/azure/openai`,
+    azure: `%BASE%/proxy/` + config.routeModifier + `azure/openai`,
   },
 };
 
