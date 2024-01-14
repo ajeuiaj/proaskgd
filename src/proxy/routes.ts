@@ -20,8 +20,8 @@ proxyRouter.use((req, _res, next) => {
   next();
 });
 proxyRouter.use(
-  express.json({ limit: "1mb" }),
-  express.urlencoded({ extended: true, limit: "1mb" })
+  express.json({ limit: "10mb" }),
+  express.urlencoded({ extended: true, limit: "10mb" })
 );
 proxyRouter.use(gatekeeper);
 proxyRouter.use(checkRisuToken);
