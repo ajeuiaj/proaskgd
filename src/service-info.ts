@@ -124,24 +124,24 @@ export type ServiceInfo = {
 
 const SERVICE_ENDPOINTS: { [s in LLMService]: Record<string, string> } = {
   openai: {
-    openai: `%BASE%/openai`,
-    openai2: `%BASE%/openai/turbo-instruct`,
-    "openai-image": `%BASE%/openai-image`,
+    openai: `%BASE%/` + config.routeModifier + `openai`,
+    openai2: `%BASE%/`+ config.routeModifier + `openai/turbo-instruct`,
+    "openai-image": `%BASE%/`+ config.routeModifier + `openai-image`,
   },
   anthropic: {
-    anthropic: `%BASE%/anthropic`,
+    anthropic: `%BASE%/` + config.routeModifier + `anthropic`,
   },
   "google-ai": {
-    "google-ai": `%BASE%/google-ai`,
+    "google-ai": `%BASE%/` + config.routeModifier + `google-ai`,
   },
   "mistral-ai": {
-    "mistral-ai": `%BASE%/mistral-ai`,
+    "mistral-ai": `%BASE%/` + config.routeModifier + `mistral-ai`,
   },
   aws: {
-    aws: `%BASE%/aws/claude`,
+    aws: `%BASE%` + config.routeModifier + `/aws/claude`,
   },
   azure: {
-    azure: `%BASE%/azure/openai`,
+    azure: `%BASE%` + config.routeModifier + `/azure/openai`,
   },
 };
 
