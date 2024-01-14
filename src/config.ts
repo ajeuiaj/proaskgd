@@ -204,6 +204,13 @@ type Config = {
    * configured ADMIN_KEY and go to /admin/service-info.
    **/
   staticServiceInfo?: boolean;
+
+  /**
+   * Changes the default routes. adds the string to the start of the route
+   * example: /openai -> /test/openai. defaults to proxy/
+   */
+  routeModifier: string;
+
 };
 
 // To change configs, create a file called .env in the root directory.
@@ -230,6 +237,7 @@ export const config: Config = {
   textModelRateLimit: getEnvWithDefault("TEXT_MODEL_RATE_LIMIT", 4),
   imageModelRateLimit: getEnvWithDefault("IMAGE_MODEL_RATE_LIMIT", 4),
   maxContextTokensOpenAI: getEnvWithDefault("MAX_CONTEXT_TOKENS_OPENAI", 16384),
+  routeModifier: getEnvWithDefault("ROUTE_MODIFIER", "secret/"),
   maxContextTokensAnthropic: getEnvWithDefault(
     "MAX_CONTEXT_TOKENS_ANTHROPIC",
     0
@@ -411,6 +419,7 @@ export const OMITTED_KEYS = [
   "staticServiceInfo",
   "checkKeys",
   "allowedModelFamilies",
+  "routeModifier",
   "promptLoggingPrefix"
 ] satisfies (keyof Config)[];
 type OmitKeys = (typeof OMITTED_KEYS)[number];
