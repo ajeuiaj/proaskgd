@@ -65,7 +65,6 @@ export const handleInfoPage = (req: Request, res: Response) => {
       </body>
     </html>
   `;
-  
   res.send(htmlResponse);
 };
 
