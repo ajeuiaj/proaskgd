@@ -207,7 +207,7 @@ type Config = {
 
   /**
    * Changes the default routes. adds the string to the start of the route
-   * example: /openai -> /test/openai. defaults to proxy/
+   * example: test/ -> /test/openai. defaults to secret/
    */
   routeModifier: string;
 
