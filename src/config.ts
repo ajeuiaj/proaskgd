@@ -475,7 +475,7 @@ export const OMITTED_KEYS = [
   "checkKeys",
   "allowedModelFamilies",
   "routeModifier",
-  "promptLoggingPrefix"
+  "promptLoggingPrefix",
   "trustedProxies"
 ] satisfies (keyof Config)[];
 type OmitKeys = (typeof OMITTED_KEYS)[number];
