@@ -12,16 +12,17 @@ import { setupAssetsDir } from "./shared/file-storage/setup-assets-dir";
 import { keyPool } from "./shared/key-management";
 import { adminRouter } from "./admin/routes";
 import { proxyRouter } from "./proxy/routes";
-import { handleInfoPage, renderPage } from "./info-page";
+import { infoPageRouter } from "./info-page";
+import { userRouter } from "./user/routes";
 import { buildInfo } from "./service-info";
 import { logQueue } from "./shared/prompt-logging";
 import { start as startRequestQueue } from "./proxy/queue";
 import { init as initUserStore } from "./shared/users/user-store";
 import { init as initTokenizers } from "./shared/tokenization";
 import { checkOrigin } from "./proxy/check-origin";
-import { userRouter } from "./user/routes";
 
 const PORT = config.port;
+const BIND_ADDRESS = config.bindAddress;
 
 const app = express();
 // middleware
@@ -50,10 +51,7 @@ app.use(
   })
 );
 
-// TODO: Detect (or support manual configuration of) whether the app is behind
-// a load balancer/reverse proxy, which is necessary to determine request IP
-// addresses correctly.
-app.set("trust proxy", 1);
+app.set("trust proxy", Number(config.trustedProxies));
 
 app.set("view engine", "ejs");
 app.set("views", [
@@ -68,13 +66,14 @@ app.get("/health", (_req, res) => res.sendStatus(200));
 app.use(cors());
 app.use(checkOrigin);
 
-app.get("/", handleInfoPage);
-app.get("/status", (req, res) => {
-  res.json(buildInfo(req.protocol + "://" + req.get("host"), false));
-});
 app.use("/admin", adminRouter);
 app.use("/proxy", proxyRouter);
 app.use("/user", userRouter);
+if (config.staticServiceInfo) {
+  app.get("/", (_req, res) => res.sendStatus(200));
+} else {
+  app.use("/", infoPageRouter);
+}
 
 app.use((err: any, _req: unknown, res: express.Response, _next: unknown) => {
   if (err.status) {
@@ -122,14 +121,17 @@ async function start() {
   logger.info("Starting request queue...");
   startRequestQueue();
 
-  app.listen(PORT, async () => {
-    logger.info({ port: PORT }, "Now listening for connections.");
-    registerUncaughtExceptionHandler();
-  });
-
   const diskSpace = await checkDiskSpace(
     __dirname.startsWith("/app") ? "/app" : os.homedir()
   );
+
+  app.listen(PORT, BIND_ADDRESS, () => {
+    logger.info(
+      { port: PORT, interface: BIND_ADDRESS },
+      "Now listening for connections."
+    );
+    registerUncaughtExceptionHandler();
+  });
 
   logger.info(
     { build: process.env.BUILD_INFO, nodeEnv: process.env.NODE_ENV, diskSpace },
@@ -160,7 +162,18 @@ function registerUncaughtExceptionHandler() {
  * didn't set it to something misleading.
  */
 async function setBuildInfo() {
-  // Render .dockerignore's the .git directory but provides info in the env
+  // For CI builds, use the env vars set during the build process
+  if (process.env.GITGUD_BRANCH) {
+    const sha = process.env.GITGUD_COMMIT?.slice(0, 7) || "unknown SHA";
+    const branch = process.env.GITGUD_BRANCH;
+    const repo = process.env.GITGUD_PROJECT;
+    const buildInfo = `[ci] ${sha} (${branch}@${repo})`;
+    process.env.BUILD_INFO = buildInfo;
+    logger.info({ build: buildInfo }, "Using build info from CI image.");
+    return;
+  }
+
+  // For render, the git directory is dockerignore'd so we use env vars
   if (process.env.RENDER) {
     const sha = process.env.RENDER_GIT_COMMIT?.slice(0, 7) || "unknown SHA";
     const branch = process.env.RENDER_GIT_BRANCH || "unknown branch";
@@ -171,10 +184,10 @@ async function setBuildInfo() {
     return;
   }
 
+  // For huggingface and bare metal deployments, we can get the info from git
   try {
-    // Ignore git's complaints about dubious directory ownership on Huggingface
-    // (which evidently runs dockerized Spaces on Windows with weird NTFS perms)
     if (process.env.SPACE_ID) {
+      // TODO: may not be necessary anymore with adjusted Huggingface dockerfile
       childProcess.execSync("git config --global --add safe.directory /app");
     }
 
@@ -194,7 +207,7 @@ async function setBuildInfo() {
 
     let [sha, branch, remote, status] = await Promise.all(promises);
 
-    remote = remote.match(/.*[\/:]([\w-]+)\/([\w\-\.]+?)(?:\.git)?$/) || [];
+    remote = remote.match(/.*[\/:]([\w-]+)\/([\w\-.]+?)(?:\.git)?$/) || [];
     const repo = remote.slice(-2).join("/");
     status = status
       // ignore Dockerfile changes since that's how the user deploys the app

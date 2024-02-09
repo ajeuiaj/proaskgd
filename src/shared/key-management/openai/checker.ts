@@ -73,12 +73,27 @@ export class OpenAIKeyChecker extends KeyCheckerBase<OpenAIKey> {
 
     const families = new Set<OpenAIModelFamily>();
     models.forEach(({ id }) => families.add(getOpenAIModelFamily(id, "turbo")));
+    
+    // disable dall-e for trial keys due to very low per-day quota that tends to
+    // render the key unusable.
+    if (key.isTrial) {
+      families.delete("dall-e");
+    }
 
     // as of 2023-11-18, many keys no longer return the dalle3 model but still
     // have access to it via the api for whatever reason.
     // if (families.has("dall-e") && !models.find(({ id }) => id === "dall-e-3")) {
     //   families.delete("dall-e");
     // }
+
+    // as of 2024-01-10, the models endpoint has a bug and sometimes returns the
+    // gpt-4-32k-0314 snapshot even though the key doesn't have access to
+    // base gpt-4-32k. we will ignore this model if the snapshot is returned
+    // without the base model.
+    const has32k = models.find(({ id }) => id === "gpt-4-32k");
+    if (families.has("gpt4-32k") && !has32k) {
+      families.delete("gpt4-32k");
+    }
 
     // We want to update the key's model families here, but we don't want to
     // update its `lastChecked` timestamp because we need to let the liveness

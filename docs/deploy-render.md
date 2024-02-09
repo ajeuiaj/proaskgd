@@ -1,4 +1,7 @@
 # Deploy to Render.com
+
+**⚠️ This method is no longer recommended.  Please use the [self-hosting instructions](./self-hosting.md) instead.**
+
 Render.com offers a free tier that includes 750 hours of compute time per month.  This is enough to run a single proxy instance 24/7.  Instances shut down after 15 minutes without traffic but start up again automatically when a request is received.  You can use something like https://app.checklyhq.com/ to ping your proxy every 15 minutes to keep it alive.
 
 ### 1. Create account
@@ -27,6 +30,8 @@ The service will be created according to the instructions in the `render.yaml` f
 - Under **Contents**, enter all of your environment variables, one per line, in the format `NAME=value`.
   - For example, `OPENAI_KEY=sk-abc123`.
 - Click **Save Changes**.
+
+**IMPORTANT:** Set `TRUSTED_PROXIES=3`, otherwise users' IP addresses will not be recorded correctly (the server will see the IP address of Render's load balancer instead of the user's real IP address).
 
 The service will automatically rebuild and deploy with the new environment variables.  This will take a few minutes.  The link to your deployed proxy will appear at the top of the page.
 

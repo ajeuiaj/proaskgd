@@ -1,5 +1,8 @@
-import { pipeline } from "stream";
+import { pipeline, Transform, Readable } from "stream";
+import StreamArray from "stream-json/streamers/StreamArray";
+import { StringDecoder } from "string_decoder";
 import { promisify } from "util";
+import { APIFormat, keyPool } from "../../../shared/key-management";
 import {
   makeCompletionSSE,
   copySseResponseHeaders,
@@ -7,22 +10,26 @@ import {
 } from "../../../shared/streaming";
 import { enqueue } from "../../queue";
 import { decodeResponseBody, RawResponseBodyHandler, RetryableError } from ".";
-import { SSEStreamAdapter } from "./streaming/sse-stream-adapter";
-import { SSEMessageTransformer } from "./streaming/sse-message-transformer";
 import { EventAggregator } from "./streaming/event-aggregator";
-import { keyPool } from "../../../shared/key-management";
+import { SSEMessageTransformer } from "./streaming/sse-message-transformer";
+import { SSEStreamAdapter } from "./streaming/sse-stream-adapter";
+import { viaEventStreamMarshaller } from "./streaming/via-event-stream-marshaller";
 
 const pipelineAsync = promisify(pipeline);
 
 /**
- * Consume the SSE stream and forward events to the client. Once the stream is
- * stream is closed, resolve with the full response body so that subsequent
- * middleware can work with it.
+ * `handleStreamedResponse` consumes and transforms a streamed response from the
+ * upstream service, forwarding events to the client in their requested format.
+ * After the entire stream has been consumed, it resolves with the full response
+ * body so that subsequent middleware in the chain can process it as if it were
+ * a non-streaming response.
  *
- * Typically we would only need of the raw response handlers to execute, but
- * in the event a streamed request results in a non-200 response, we need to
- * fall back to the non-streaming response handler so that the error handler
- * can inspect the error response.
+ * In the event of an error, the request's streaming flag is unset and the non-
+ * streaming response handler is called instead.
+ *
+ * If the error is retryable, that handler will re-enqueue the request and also
+ * reset the streaming flag. Unfortunately the streaming flag is set and unset
+ * in multiple places, so it's hard to keep track of.
  */
 export const handleStreamedResponse: RawResponseBodyHandler = async (
   proxyRes,
@@ -48,8 +55,8 @@ export const handleStreamedResponse: RawResponseBodyHandler = async (
     `Starting to proxy SSE stream.`
   );
 
-  // Users waiting in the queue already have a SSE connection open for the
-  // heartbeat, so we can't always send the stream headers.
+  // Typically, streaming will have already been initialized by the request
+  // queue to send heartbeat pings.
   if (!res.headersSent) {
     copySseResponseHeaders(proxyRes, res);
     initializeSseStream(res);
@@ -57,9 +64,17 @@ export const handleStreamedResponse: RawResponseBodyHandler = async (
 
   const prefersNativeEvents = req.inboundApi === req.outboundApi;
   const contentType = proxyRes.headers["content-type"];
+  const streamOptions = { contentType, api: req.outboundApi, logger: req.log };
 
-  const adapter = new SSEStreamAdapter({ contentType, api: req.outboundApi });
+  // Decoder turns the raw response stream into a stream of events in some
+  // format (text/event-stream, vnd.amazon.event-stream, streaming JSON, etc).
+  const decoder = selectDecoderStream({ ...streamOptions, input: proxyRes });
+  // Adapter transforms the decoded events into server-sent events.
+  const adapter = new SSEStreamAdapter(streamOptions);
+  // Aggregator compiles all events into a single response object.
   const aggregator = new EventAggregator({ format: req.outboundApi });
+  // Transformer converts server-sent events from one vendor's API message
+  // format to another.
   const transformer = new SSEMessageTransformer({
     inputFormat: req.outboundApi,
     inputApiVersion: String(req.headers["anthropic-version"]),
@@ -73,10 +88,12 @@ export const handleStreamedResponse: RawResponseBodyHandler = async (
     .on("data", (msg) => {
       if (!prefersNativeEvents) res.write(`data: ${JSON.stringify(msg)}\n\n`);
       aggregator.addEvent(msg);
+    }).on("end", () => {
+      req.log.debug({ key: hash }, `Finished streaming response.`);
     });
 
   try {
-    await pipelineAsync(proxyRes, adapter, transformer);
+    await pipelineAsync(proxyRes, decoder, adapter, transformer);
     req.log.debug({ key: hash }, `Finished proxying SSE stream.`);
     res.end();
     return aggregator.getFinalResponse();
@@ -91,7 +108,7 @@ export const handleStreamedResponse: RawResponseBodyHandler = async (
       await enqueue(req);
     } else {
       const { message, stack, lastEvent } = err;
-      const eventText = JSON.stringify(lastEvent, null, 2) ?? "undefined"
+      const eventText = JSON.stringify(lastEvent, null, 2) ?? "undefined";
       const errorEvent = makeCompletionSSE({
         format: req.inboundApi,
         title: "Proxy stream error",
@@ -107,3 +124,29 @@ export const handleStreamedResponse: RawResponseBodyHandler = async (
     throw err;
   }
 };
+
+function selectDecoderStream(options: {
+  input: Readable;
+  api: APIFormat;
+  contentType?: string;
+}) {
+  const { api, contentType, input } = options;
+  if (contentType?.includes("application/vnd.amazon.eventstream")) {
+    return viaEventStreamMarshaller(input);
+  } else if (api === "google-ai") {
+    return StreamArray.withParser();
+  } else {
+    // Passthrough stream, but ensures split chunks across multi-byte characters
+    // are handled correctly.
+    const stringDecoder = new StringDecoder("utf8");
+    return new Transform({
+      readableObjectMode: true,
+      writableObjectMode: false,
+      transform(chunk, _encoding, callback) {
+        const text = stringDecoder.write(chunk);
+        if (text) this.push(text);
+        callback();
+      },
+    });
+  }
+}

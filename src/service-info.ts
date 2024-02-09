@@ -107,6 +107,21 @@ export type ServiceInfo = {
   & { [f in GoogleAIModelFamily]?: BaseFamilyInfo }
   & { [f in MistralAIModelFamily]?: BaseFamilyInfo };
 
+// https://stackoverflow.com/a/66661477
+// type DeepKeyOf<T> = (
+//   [T] extends [never]
+//     ? ""
+//     : T extends object
+//     ? {
+//         [K in Exclude<keyof T, symbol>]: `${K}${DotPrefix<DeepKeyOf<T[K]>>}`;
+//       }[Exclude<keyof T, symbol>]
+//     : ""
+// ) extends infer D
+//   ? Extract<D, string>
+//   : never;
+// type DotPrefix<T extends string> = T extends "" ? "" : `.${T}`;
+// type ServiceInfoPath = `{${DeepKeyOf<ServiceInfo>}}`;
+
 const SERVICE_ENDPOINTS: { [s in LLMService]: Record<string, string> } = {
   openai: {
     openai: `%BASE%/proxy/` + config.routeModifier + `openai`,
