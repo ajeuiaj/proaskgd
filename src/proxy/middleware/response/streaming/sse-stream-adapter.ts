@@ -51,7 +51,7 @@ export class SSEStreamAdapter extends Transform {
           const event = Buffer.from(bytes, "base64").toString("utf8");
           return ["event: completion", `data: ${event}`].join(`\n`);
         }
-      // Intentional fallthrough, non-JSON events will be something very weird
+      // Intentional fallthrough, as non-JSON events may as well be errors
       // noinspection FallThroughInSwitchStatementJS
       case "exception":
       case "error":
@@ -61,7 +61,6 @@ export class SSEStreamAdapter extends Transform {
         switch (type) {
           case "throttlingexception":
             this.log.warn(
-              { message, type },
               "AWS request throttled after streaming has already started; retrying"
             );
             throw new RetryableError("AWS request throttled mid-stream");
@@ -85,26 +84,28 @@ export class SSEStreamAdapter extends Transform {
   }
 
   /** Processes an incoming array element from the Google AI JSON stream. */
-  protected processGoogleObject(value: any): string | null {
+  protected processGoogleObject(data: any): string | null {
+    // Sometimes data has fields key and value, sometimes it's just the
+    // candidates array.
+    const candidates = data.value?.candidates ?? data.candidates ?? [{}];
     try {
-      const candidates = value.candidates ?? [{}];
       const hasParts = candidates[0].content?.parts?.length > 0;
       if (hasParts) {
-        return `data: ${JSON.stringify(value)}`;
+        return `data: ${JSON.stringify(data)}`;
       } else {
-        this.log.error({ event: value }, "Received bad Google AI event");
+        this.log.error({ event: data }, "Received bad Google AI event");
         return `data: ${makeCompletionSSE({
           format: "google-ai",
           title: "Proxy stream error",
           message:
             "The proxy received malformed or unexpected data from Google AI while streaming.",
-          obj: value,
+          obj: data,
           reqId: "proxy-sse-adapter-message",
           model: "",
         })}`;
       }
     } catch (error) {
-      error.lastEvent = value;
+      error.lastEvent = data;
       this.emit("error", error);
     }
     return null;
@@ -142,7 +143,6 @@ export class SSEStreamAdapter extends Transform {
   }
 
   _flush(callback: (err?: Error | null) => void) {
-    this.log.debug("SSEStreamAdapter flushing");
     callback();
   }
 }
