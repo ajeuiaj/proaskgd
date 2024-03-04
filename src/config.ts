@@ -211,11 +211,6 @@ type Config = {
    * configured ADMIN_KEY and go to /admin/service-info.
    **/
   staticServiceInfo?: boolean;
-    /**
-   * Changes the default routes. adds the string to the start of the route
-   * example: test/ -> /test/openai. defaults to secret/
-   **/
-  routeModifier: string;
   /**
    * Trusted proxy hops. If you are deploying the server behind a reverse proxy
    * (Nginx, Cloudflare Tunnel, AWS WAF, etc.) the IP address of incoming
@@ -260,6 +255,11 @@ type Config = {
    * risk.
    */
   allowOpenAIToolUsage?: boolean;
+  /**
+   * Allows overriding the default proxy endpoint route. Defaults to /proxy.
+   * A leading slash is required.
+   */
+  proxyEndpointRoute: string;
 };
 
 // To change configs, create a file called .env in the root directory.
@@ -288,7 +288,6 @@ export const config: Config = {
   textModelRateLimit: getEnvWithDefault("TEXT_MODEL_RATE_LIMIT", 4),
   imageModelRateLimit: getEnvWithDefault("IMAGE_MODEL_RATE_LIMIT", 4),
   maxContextTokensOpenAI: getEnvWithDefault("MAX_CONTEXT_TOKENS_OPENAI", 16384),
-  routeModifier: getEnvWithDefault("ROUTE_MODIFIER", "secret/"),
   maxContextTokensAnthropic: getEnvWithDefault(
     "MAX_CONTEXT_TOKENS_ANTHROPIC",
     0
@@ -311,6 +310,7 @@ export const config: Config = {
     "mistral-tiny",
     "mistral-small",
     "mistral-medium",
+    "mistral-large",
     "aws-claude",
     "azure-turbo",
     "azure-gpt4",
@@ -356,6 +356,7 @@ export const config: Config = {
   staticServiceInfo: getEnvWithDefault("STATIC_SERVICE_INFO", false),
   trustedProxies: getEnvWithDefault("TRUSTED_PROXIES", 1),
   allowOpenAIToolUsage: getEnvWithDefault("ALLOW_OPENAI_TOOL_USAGE", false),
+  proxyEndpointRoute: getEnvWithDefault("PROXY_ENDPOINT_ROUTE", "/proxy"),
 } as const;
 
 function generateCookieSecret() {
@@ -474,9 +475,9 @@ export const OMITTED_KEYS = [
   "staticServiceInfo",
   "checkKeys",
   "allowedModelFamilies",
-  "routeModifier",
   "promptLoggingPrefix",
-  "trustedProxies"
+  "trustedProxies",
+  "proxyEndpointRoute",
 ] satisfies (keyof Config)[];
 type OmitKeys = (typeof OMITTED_KEYS)[number];
 

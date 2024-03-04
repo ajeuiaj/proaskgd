@@ -34,10 +34,12 @@ const INITIAL_TOKENS: Required<UserTokenCounts> = {
   "gpt4-turbo": 0,
   "dall-e": 0,
   claude: 0,
+  "claude-opus": 0,
   "gemini-pro": 0,
   "mistral-tiny": 0,
   "mistral-small": 0,
   "mistral-medium": 0,
+  "mistral-large": 0,
   "aws-claude": 0,
   "azure-turbo": 0,
   "azure-gpt4": 0,
@@ -399,7 +401,8 @@ function getModelFamilyForQuotaUsage(
     case "openai-text":
     case "openai-image":
       return getOpenAIModelFamily(model);
-    case "anthropic":
+    case "anthropic-chat":
+    case "anthropic-text":
       return getClaudeModelFamily(model);
     case "google-ai":
       return getGoogleAIModelFamily(model);

@@ -8,7 +8,6 @@ import { googleAI } from "./google-ai";
 import { mistralAI } from "./mistral-ai";
 import { aws } from "./aws";
 import { azure } from "./azure";
-import { config } from "../config"
 
 const proxyRouter = express.Router();
 proxyRouter.use((req, _res, next) => {
@@ -20,8 +19,8 @@ proxyRouter.use((req, _res, next) => {
   next();
 });
 proxyRouter.use(
-  express.json({ limit: "10mb" }),
-  express.urlencoded({ extended: true, limit: "10mb" })
+  express.json({ limit: "100mb" }),
+  express.urlencoded({ extended: true, limit: "100mb" })
 );
 proxyRouter.use(gatekeeper);
 proxyRouter.use(checkRisuToken);
@@ -30,15 +29,13 @@ proxyRouter.use((req, _res, next) => {
   req.retryCount = 0;
   next();
 });
-proxyRouter.use("/" + config.routeModifier + "openai", addV1, openai);
-proxyRouter.use("/" + config.routeModifier + "openai-image", addV1, openaiImage);
-proxyRouter.use("/" + config.routeModifier + "anthropic", addV1, anthropic);
-proxyRouter.use("/" + config.routeModifier + "google-ai", addV1, googleAI);
-proxyRouter.use("/" + config.routeModifier + "mistral-ai", addV1, mistralAI);
-proxyRouter.use("/" + config.routeModifier + "aws/claude", addV1, aws);
-proxyRouter.use("/" + config.routeModifier + "azure/openai", addV1, azure);
-
-
+proxyRouter.use("/openai", addV1, openai);
+proxyRouter.use("/openai-image", addV1, openaiImage);
+proxyRouter.use("/anthropic", addV1, anthropic);
+proxyRouter.use("/google-ai", addV1, googleAI);
+proxyRouter.use("/mistral-ai", addV1, mistralAI);
+proxyRouter.use("/aws/claude", addV1, aws);
+proxyRouter.use("/azure/openai", addV1, azure);
 // Redirect browser requests to the homepage.
 proxyRouter.get("*", (req, res, next) => {
   const isBrowser = req.headers["user-agent"]?.includes("Mozilla");
@@ -48,6 +45,11 @@ proxyRouter.get("*", (req, res, next) => {
     next();
   }
 });
+// Handle 404s.
+proxyRouter.use((_req, res) => {
+  res.status(404).json({ error: "Not found" });
+});
+
 export { proxyRouter as proxyRouter };
 
 function addV1(req: Request, res: Response, next: NextFunction) {

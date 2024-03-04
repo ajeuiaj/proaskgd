@@ -84,7 +84,7 @@ export function makeCompletionSSE({
         model,
       };
       break;
-    case "anthropic":
+    case "anthropic-text":
       event = {
         completion: content,
         stop_reason: title,
@@ -92,6 +92,13 @@ export function makeCompletionSSE({
         stop: null,
         model,
         log_id: "proxy-req-" + id,
+      };
+      break;
+    case "anthropic-chat":
+      event = {
+        type: "content_block_delta",
+        index: 0,
+        delta: { type: "text_delta", text: content },
       };
       break;
     case "google-ai":
@@ -112,10 +119,57 @@ export function makeCompletionSSE({
       assertNever(format);
   }
 
-  if (format === "anthropic") {
+  if (format === "anthropic-text") {
     return (
       ["event: completion", `data: ${JSON.stringify(event)}`].join("\n") +
       "\n\n"
+    );
+  }
+
+  // ugh.
+  if (format === "anthropic-chat") {
+    return (
+      [
+        [
+          "event: message_start",
+          `data: ${JSON.stringify({
+            type: "message_start",
+            message: {
+              id: "error-" + id,
+              type: "message",
+              role: "assistant",
+              content: [],
+              model,
+            },
+          })}`,
+        ].join("\n"),
+        [
+          "event: content_block_start",
+          `data: ${JSON.stringify({
+            type: "content_block_start",
+            index: 0,
+            content_block: { type: "text", text: "" },
+          })}`,
+        ].join("\n"),
+        ["event: content_block_delta", `data: ${JSON.stringify(event)}`].join(
+          "\n"
+        ),
+        [
+          "event: content_block_stop",
+          `data: ${JSON.stringify({ type: "content_block_stop", index: 0 })}`,
+        ].join("\n"),
+        [
+          "event: message_delta",
+          `data: ${JSON.stringify({
+            type: "message_delta",
+            delta: { stop_reason: title, stop_sequence: null, usage: null },
+          })}`,
+        ],
+        [
+          "event: message_stop",
+          `data: ${JSON.stringify({ type: "message_stop" })}`,
+        ].join("\n"),
+      ].join("\n\n") + "\n\n"
     );
   }
 

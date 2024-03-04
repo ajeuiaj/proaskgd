@@ -22,12 +22,13 @@ export type OpenAIModelFamily =
   | "gpt4-32k"
   | "gpt4-turbo"
   | "dall-e";
-export type AnthropicModelFamily = "claude";
+export type AnthropicModelFamily = "claude" | "claude-opus";
 export type GoogleAIModelFamily = "gemini-pro";
 export type MistralAIModelFamily =
   | "mistral-tiny"
   | "mistral-small"
-  | "mistral-medium";
+  | "mistral-medium"
+  | "mistral-large";
 export type AwsBedrockModelFamily = "aws-claude";
 export type AzureOpenAIModelFamily = `azure-${Exclude<
   OpenAIModelFamily,
@@ -50,10 +51,12 @@ export const MODEL_FAMILIES = (<A extends readonly ModelFamily[]>(
   "gpt4-turbo",
   "dall-e",
   "claude",
+  "claude-opus",
   "gemini-pro",
   "mistral-tiny",
   "mistral-small",
   "mistral-medium",
+  "mistral-large",
   "aws-claude",
   "azure-turbo",
   "azure-gpt4",
@@ -94,6 +97,7 @@ export const MODEL_FAMILY_SERVICE: {
   "gpt4-32k": "openai",
   "dall-e": "openai",
   claude: "anthropic",
+  "claude-opus": "anthropic",
   "aws-claude": "aws",
   "azure-turbo": "azure",
   "azure-gpt4": "azure",
@@ -103,6 +107,7 @@ export const MODEL_FAMILY_SERVICE: {
   "mistral-tiny": "mistral-ai",
   "mistral-small": "mistral-ai",
   "mistral-medium": "mistral-ai",
+  "mistral-large": "mistral-ai",
 };
 
 pino({ level: "debug" }).child({ module: "startup" });
@@ -119,6 +124,7 @@ export function getOpenAIModelFamily(
 
 export function getClaudeModelFamily(model: string): ModelFamily {
   if (model.startsWith("anthropic.")) return getAwsBedrockModelFamily(model);
+  if (model.includes("opus")) return "claude-opus";
   return "claude";
 }
 
@@ -127,17 +133,24 @@ export function getGoogleAIModelFamily(_model: string): ModelFamily {
 }
 
 export function getMistralAIModelFamily(model: string): MistralAIModelFamily {
-  switch (model) {
+  const prunedModel = model.replace(/-(latest|\d{4})$/, "");
+  switch (prunedModel) {
     case "mistral-tiny":
     case "mistral-small":
     case "mistral-medium":
-      return model;
+    case "mistral-large":
+      return model as MistralAIModelFamily;
+    case "open-mistral-7b":
+      return "mistral-tiny";
+    case "open-mixtral-8x7b":
+      return "mistral-small";
     default:
       return "mistral-tiny";
   }
 }
 
-export function getAwsBedrockModelFamily(_model: string): ModelFamily {
+export function getAwsBedrockModelFamily(model: string): ModelFamily {
+  if (model.includes("opus")) return "claude-opus";
   return "aws-claude";
 }
 
@@ -183,7 +196,8 @@ export function getModelFamilyForRequest(req: Request): ModelFamily {
     modelFamily = getAzureOpenAIModelFamily(model);
   } else {
     switch (req.outboundApi) {
-      case "anthropic":
+      case "anthropic-chat":
+      case "anthropic-text":
         modelFamily = getClaudeModelFamily(model);
         break;
       case "openai":

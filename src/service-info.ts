@@ -91,6 +91,7 @@ export type ServiceInfo = {
     openai2?: string;
     "openai-image"?: string;
     anthropic?: string;
+    "anthropic-claude-3"?: string;
     "google-ai"?: string;
     "mistral-ai"?: string;
     aws?: string;
@@ -126,24 +127,25 @@ export type ServiceInfo = {
 
 const SERVICE_ENDPOINTS: { [s in LLMService]: Record<string, string> } = {
   openai: {
-    openai: `%BASE%/` + config.routeModifier + `openai`,
-    openai2: `%BASE%/`+ config.routeModifier + `openai/turbo-instruct`,
-    "openai-image": `%BASE%/`+ config.routeModifier + `openai-image`,
+    openai: `%BASE%/openai`,
+    openai2: `%BASE%/openai/turbo-instruct`,
+    "openai-image": `%BASE%/openai-image`,
   },
   anthropic: {
-    anthropic: `%BASE%/` + config.routeModifier + `anthropic`,
+    anthropic: `%BASE%/anthropic`,
+    "anthropic-claude-3 (temporary compatibility endpoint)": `%BASE%/anthropic/claude-3`,
   },
   "google-ai": {
-    "google-ai": `%BASE%/` + config.routeModifier + `google-ai`,
+    "google-ai": `%BASE%/google-ai`,
   },
   "mistral-ai": {
-    "mistral-ai": `%BASE%/` + config.routeModifier + `mistral-ai`,
+    "mistral-ai": `%BASE%/mistral-ai`,
   },
   aws: {
-    aws: `%BASE%/` + config.routeModifier + `aws/claude`,
+    aws: `%BASE%/aws/claude`,
   },
   azure: {
-    azure: `%BASE%/` + config.routeModifier + `azure/openai`,
+    azure: `%BASE%/azure/openai`,
   },
 };
 

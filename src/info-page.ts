@@ -7,7 +7,6 @@ import { buildInfo, ServiceInfo } from "./service-info";
 import { getLastNImages } from "./shared/file-storage/image-history";
 import { keyPool } from "./shared/key-management";
 import { MODEL_FAMILY_SERVICE, ModelFamily } from "./shared/models";
-import { currentFileNumber, islogging } from "./shared/prompt-logging/backends/files";
 import { withSession } from "./shared/with-session";
 import { checkCsrfToken, injectCsrfToken } from "./shared/inject-csrf";
 
@@ -18,11 +17,13 @@ const MODEL_FAMILY_FRIENDLY_NAME: { [f in ModelFamily]: string } = {
   "gpt4-32k": "GPT-4 32k",
   "gpt4-turbo": "GPT-4 Turbo",
   "dall-e": "DALL-E",
-  "claude": "Claude",
+  "claude": "Claude (Sonnet)",
+  "claude-opus": "Claude (Opus)",
   "gemini-pro": "Gemini Pro",
   "mistral-tiny": "Mistral 7B",
-  "mistral-small": "Mixtral 8x7B",
-  "mistral-medium": "Mistral Medium (prototype)",
+  "mistral-small": "Mixtral Small", // Originally 8x7B, but that now refers to the older open-weight version. Mixtral Small is a newer closed-weight update to the 8x7B model.
+  "mistral-medium": "Mistral Medium",
+  "mistral-large": "Mistral Large",
   "aws-claude": "AWS Claude",
   "azure-turbo": "Azure GPT-3.5 Turbo",
   "azure-gpt4": "Azure GPT-4",
@@ -47,7 +48,7 @@ export const handleInfoPage = (req: Request, res: Response) => {
       ? getExternalUrlForHuggingfaceSpaceId(process.env.SPACE_ID)
       : req.protocol + "://" + req.get("host");
 
-  const info = buildInfo(baseUrl + "/proxy");
+  const info = buildInfo(baseUrl + config.proxyEndpointRoute);
   infoPageHtml = renderPage(info);
   infoPageLastUpdated = Date.now();
 
@@ -57,17 +58,6 @@ export const handleInfoPage = (req: Request, res: Response) => {
 export function renderPage(info: ServiceInfo) {
   const title = getServerTitle();
   const headerHtml = buildInfoPageHeader(info);
-  let loggingSection = "";
-
-  if (config.promptLogging) {
-    const loggingStatus = islogging ? "logging is enabled" : "logging is disabled";
-    const fileNumberDisplay = `${currentFileNumber}/${config.promptLoggingFilecount}`;
-    loggingSection = `
-      <h2>Logging Status</h2>
-      <p>File Number: ${fileNumberDisplay}</p>
-      <p>Status: ${loggingStatus}</p>
-    `;
-  }
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -81,9 +71,6 @@ export function renderPage(info: ServiceInfo) {
         background-color: #f0f0f0;
         padding: 1em;
       }
-      .logging-info {
-        font-family: inherit;
-        color: #333;
       @media (prefers-color-scheme: dark) {
         body {
           background-color: #222;
@@ -99,7 +86,6 @@ export function renderPage(info: ServiceInfo) {
   <body>
     ${headerHtml}
     <hr />
-    ${loggingSection}
     <h2>Service Info</h2>
     <pre>${JSON.stringify(info, null, 2)}</pre>
     ${getSelfServiceLinks()}
@@ -117,9 +103,11 @@ function buildInfoPageHeader(info: ServiceInfo) {
   let infoBody = `# ${title}`;
   if (config.promptLogging) {
     infoBody += `\n## Prompt Logging Enabled
-You can check the logging status below.
-Prompt logs are anonymous and do not contain IP addresses or timestamps.
-\n**If you are uncomfortable with this, don't send prompts to this proxy or wait a bit. Logging will be automatically disabled a few hours after the proxy's initial startup**`;
+This proxy keeps full logs of all prompts and AI responses. Prompt logs are anonymous and do not contain IP addresses or timestamps.
+
+[You can see the type of data logged here, along with the rest of the code.](https://gitgud.io/khanon/oai-reverse-proxy/-/blob/main/src/shared/prompt-logging/index.ts).
+
+**If you are uncomfortable with this, don't send prompts to this proxy!**`;
   }
 
   if (config.staticServiceInfo) {
