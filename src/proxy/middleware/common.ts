@@ -2,9 +2,10 @@ import { Request, Response } from "express";
 import httpProxy from "http-proxy";
 import { ZodError } from "zod";
 import { generateErrorMessage } from "zod-error";
-import { makeCompletionSSE } from "../../shared/streaming";
 import { assertNever } from "../../shared/utils";
 import { QuotaExceededError } from "./request/preprocessors/apply-quota-limits";
+import { sendErrorToClient } from "./response/error-generator";
+import { HttpError } from "../../shared/errors";
 
 const OPENAI_CHAT_COMPLETION_ENDPOINT = "/v1/chat/completions";
 const OPENAI_TEXT_COMPLETION_ENDPOINT = "/v1/completions";
@@ -12,7 +13,8 @@ const OPENAI_EMBEDDINGS_ENDPOINT = "/v1/embeddings";
 const OPENAI_IMAGE_COMPLETION_ENDPOINT = "/v1/images/generations";
 const ANTHROPIC_COMPLETION_ENDPOINT = "/v1/complete";
 const ANTHROPIC_MESSAGES_ENDPOINT = "/v1/messages";
-const ANTHROPIC_CLAUDE3_COMPAT_ENDPOINT = "/v1/claude-3/complete";
+const ANTHROPIC_SONNET_COMPAT_ENDPOINT = "/v1/sonnet";
+const ANTHROPIC_OPUS_COMPAT_ENDPOINT = "/v1/opus";
 
 export function isTextGenerationRequest(req: Request) {
   return (
@@ -22,7 +24,8 @@ export function isTextGenerationRequest(req: Request) {
       OPENAI_TEXT_COMPLETION_ENDPOINT,
       ANTHROPIC_COMPLETION_ENDPOINT,
       ANTHROPIC_MESSAGES_ENDPOINT,
-      ANTHROPIC_CLAUDE3_COMPAT_ENDPOINT,
+      ANTHROPIC_SONNET_COMPAT_ENDPOINT,
+      ANTHROPIC_OPUS_COMPAT_ENDPOINT,
     ].some((endpoint) => req.path.startsWith(endpoint))
   );
 }
@@ -40,7 +43,7 @@ export function isEmbeddingsRequest(req: Request) {
   );
 }
 
-export function writeErrorResponse(
+export function sendProxyError(
   req: Request,
   res: Response,
   statusCode: number,
@@ -52,29 +55,22 @@ export function writeErrorResponse(
       ? `The proxy encountered an error while trying to process your prompt.`
       : `The proxy encountered an error while trying to send your prompt to the upstream service.`;
 
-  // If we're mid-SSE stream, send a data event with the error payload and end
-  // the stream. Otherwise just send a normal error response.
-  if (
-    res.headersSent ||
-    String(res.getHeader("content-type")).startsWith("text/event-stream")
-  ) {
-    const event = makeCompletionSSE({
+  if (req.tokenizerInfo && typeof errorPayload.error === "object") {
+    errorPayload.error.proxy_tokenizer = req.tokenizerInfo;
+  }
+
+  sendErrorToClient({
+    options: {
       format: req.inboundApi,
       title: `Proxy error (HTTP ${statusCode} ${statusMessage})`,
       message: `${msg} Further technical details are provided below.`,
       obj: errorPayload,
       reqId: req.id,
       model: req.body?.model,
-    });
-    res.write(event);
-    res.write(`data: [DONE]\n\n`);
-    res.end();
-  } else {
-    if (req.tokenizerInfo && typeof errorPayload.error === "object") {
-      errorPayload.error.proxy_tokenizer = req.tokenizerInfo;
-    }
-    res.status(statusCode).json(errorPayload);
-  }
+    },
+    req,
+    res,
+  });
 }
 
 export const handleProxyError: httpProxy.ErrorCallback = (err, req, res) => {
@@ -90,7 +86,7 @@ export const classifyErrorAndSend = (
   try {
     const { statusCode, statusMessage, userMessage, ...errorDetails } =
       classifyError(err);
-    writeErrorResponse(req, res, statusCode, statusMessage, {
+    sendProxyError(req, res, statusCode, statusMessage, {
       error: { message: userMessage, ...errorDetails },
     });
   } catch (error) {
@@ -118,6 +114,15 @@ function classifyError(err: Error): {
   };
 
   switch (err.constructor.name) {
+    case "HttpError":
+      if ((err as HttpError).status === 402) {
+        return {
+          statusCode: 402,
+          statusMessage: "No Keys Available",
+          userMessage: err.message,
+          type: "proxy_no_keys_available",
+        };
+      } else return defaultError;
     case "ZodError":
       const userMessage = generateErrorMessage((err as ZodError).issues, {
         prefix: "Request validation failed. ",

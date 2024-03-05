@@ -18,7 +18,7 @@ import {
   getCompletionFromBody,
   isImageGenerationRequest,
   isTextGenerationRequest,
-  writeErrorResponse,
+  sendProxyError,
 } from "../common";
 import { handleStreamedResponse } from "./handle-streamed-response";
 import { logPrompt } from "./log-prompt";
@@ -192,13 +192,13 @@ export const decodeResponseBody: RawResponseBodyHandler = async (
           // as it was never a problem.
           body = await decoder(body);
         } else {
-          const errorMessage = `Proxy received response with unsupported content-encoding: ${contentEncoding}`;
-          req.log.warn({ contentEncoding, key: req.key?.hash }, errorMessage);
-          writeErrorResponse(req, res, 500, "Internal Server Error", {
-            error: errorMessage,
+          const error = `Proxy received response with unsupported content-encoding: ${contentEncoding}`;
+          req.log.warn({ contentEncoding, key: req.key?.hash }, error);
+          sendProxyError(req, res, 500, "Internal Server Error", {
+            error,
             contentEncoding,
           });
-          return reject(errorMessage);
+          return reject(error);
         }
       }
 
@@ -208,13 +208,11 @@ export const decodeResponseBody: RawResponseBodyHandler = async (
           return resolve(json);
         }
         return resolve(body.toString());
-      } catch (error: any) {
-        const errorMessage = `Proxy received response with invalid JSON: ${error.message}`;
-        req.log.warn({ error: error.stack, key: req.key?.hash }, errorMessage);
-        writeErrorResponse(req, res, 500, "Internal Server Error", {
-          error: errorMessage,
-        });
-        return reject(errorMessage);
+      } catch (e) {
+        const msg = `Proxy received response with invalid JSON: ${e.message}`;
+        req.log.warn({ error: e.stack, key: req.key?.hash }, msg);
+        sendProxyError(req, res, 500, "Internal Server Error", { error: msg });
+        return reject(msg);
       }
     });
   });
@@ -267,7 +265,7 @@ const handleUpstreamErrors: ProxyResHandlerWithBody = async (
       proxy_note: `Proxy got back an error, but it was not in JSON format. This is likely a temporary problem with the upstream service.`,
     };
 
-    writeErrorResponse(req, res, statusCode, statusMessage, errorObject);
+    sendProxyError(req, res, statusCode, statusMessage, errorObject);
     throw new HttpError(statusCode, parseError.message);
   }
 
@@ -332,9 +330,8 @@ const handleUpstreamErrors: ProxyResHandlerWithBody = async (
         errorPayload.proxy_note = `API key is invalid or revoked. ${tryAgainMessage}`;
         break;
       case "AccessDeniedException":
-        const isModelAccessError = errorPayload.error?.message?.includes(
-          `access to the model with the specified model ID`
-        );
+        const isModelAccessError =
+          errorPayload.error?.message?.includes(`specified model ID`);
         if (!isModelAccessError) {
           req.log.error(
             { key: req.key?.hash, model: req.body?.model },
@@ -412,7 +409,9 @@ const handleUpstreamErrors: ProxyResHandlerWithBody = async (
     );
   }
 
-  writeErrorResponse(req, res, statusCode, statusMessage, errorPayload);
+  sendProxyError(req, res, statusCode, statusMessage, errorPayload);
+  // This is bubbled up to onProxyRes's handler for logging but will not trigger
+  // a write to the response as `sendProxyError` has just done that.
   throw new HttpError(statusCode, errorPayload.error?.message);
 };
 
@@ -451,7 +450,7 @@ async function handleAnthropicBadRequestError(
     return;
   }
 
-  errorPayload.proxy_note = `Unrecognized 400 Bad Request error from the API.`;
+  errorPayload.proxy_note = `Unrecognized error from the API. (${error?.message})`;
 }
 
 async function handleAnthropicRateLimitError(
