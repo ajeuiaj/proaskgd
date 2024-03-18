@@ -5,7 +5,7 @@ import { HttpRequest } from "@smithy/protocol-http";
 import {
   AnthropicV1TextSchema,
   AnthropicV1MessagesSchema,
-} from "../../../../shared/api-schemas/anthropic";
+} from "../../../../shared/api-schemas";
 import { keyPool } from "../../../../shared/key-management";
 import { RequestPreprocessor } from "../index";
 
@@ -38,6 +38,7 @@ export const signAwsRequest: RequestPreprocessor = async (req) => {
   if (req.outboundApi === "anthropic-chat") {
     strippedParams = AnthropicV1MessagesSchema.pick({
       messages: true,
+      system: true,
       max_tokens: true,
       stop_sequences: true,
       temperature: true,
@@ -85,6 +86,12 @@ export const signAwsRequest: RequestPreprocessor = async (req) => {
   } else {
     newRequest.headers["accept"] = "*/*";
   }
+
+  const { key, body, inboundApi, outboundApi } = req;
+  req.log.info(
+    { key: key.hash, model: body.model, inboundApi, outboundApi },
+    "Assigned AWS credentials to request"
+  );
 
   req.signedRequest = await sign(newRequest, getCredentialParts(req));
 };

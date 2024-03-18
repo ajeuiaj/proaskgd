@@ -10,11 +10,11 @@ import {
 import { ProxyResHandlerWithBody } from ".";
 import { assertNever } from "../../../shared/utils";
 import {
-  AnthropicChatMessage, flattenAnthropicMessages,
+  AnthropicChatMessage,
+  flattenAnthropicMessages,
   MistralAIChatMessage,
   OpenAIChatMessage,
 } from "../../../shared/api-schemas";
-import { APIFormat } from "../../../shared/key-management";
 
 /** If prompt logging is enabled, enqueues the prompt for logging. */
 export const logPrompt: ProxyResHandlerWithBody = async (
@@ -35,7 +35,7 @@ export const logPrompt: ProxyResHandlerWithBody = async (
   if (!loggable) return;
 
   const promptPayload = getPromptForRequest(req, responseBody);
-  const promptFlattened = flattenMessages(promptPayload, req.outboundApi);
+  const promptFlattened = flattenMessages(promptPayload);
   const response = getCompletionFromBody(req, responseBody);
   const model = getModelFromBody(req, responseBody);
 
@@ -62,7 +62,7 @@ const getPromptForRequest = (
 ):
   | string
   | OpenAIChatMessage[]
-  | AnthropicChatMessage[]
+  | { system: string; messages: AnthropicChatMessage[] }
   | MistralAIChatMessage[]
   | OaiImageResult => {
   // Since the prompt logger only runs after the request has been proxied, we
@@ -71,8 +71,9 @@ const getPromptForRequest = (
   switch (req.outboundApi) {
     case "openai":
     case "mistral-ai":
-    case "anthropic-chat":
       return req.body.messages;
+    case "anthropic-chat":
+      return { system: req.body.system, messages: req.body.messages };
     case "openai-text":
       return req.body.prompt;
     case "openai-image":
@@ -95,17 +96,17 @@ const getPromptForRequest = (
 const flattenMessages = (
   val:
     | string
-    | OpenAIChatMessage[]
-    | MistralAIChatMessage[]
     | OaiImageResult
-    | AnthropicChatMessage[],
-  format: APIFormat,
+    | OpenAIChatMessage[]
+    | { system: string; messages: AnthropicChatMessage[] }
+    | MistralAIChatMessage[]
 ): string => {
   if (typeof val === "string") {
     return val.trim();
   }
-  if (format === "anthropic-chat") {
-    return flattenAnthropicMessages(val as AnthropicChatMessage[]);
+  if (isAnthropicChatPrompt(val)) {
+    const { system, messages } = val;
+    return `System: ${system}\n\n${flattenAnthropicMessages(messages)}`;
   }
   if (Array.isArray(val)) {
     return val
@@ -115,6 +116,8 @@ const flattenMessages = (
               .map((c) => {
                 if ("text" in c) return c.text;
                 if ("image_url" in c) return "(( Attached Image ))";
+                if ("source" in c) return "(( Attached Image ))";
+                return "(( Unsupported Content ))";
               })
               .join("\n")
           : content;
@@ -124,3 +127,14 @@ const flattenMessages = (
   }
   return val.prompt.trim();
 };
+
+function isAnthropicChatPrompt(
+  val: unknown
+): val is { system: string; messages: AnthropicChatMessage[] } {
+  return (
+    typeof val === "object" &&
+    val !== null &&
+    "system" in val &&
+    "messages" in val
+  );
+}

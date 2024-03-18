@@ -52,6 +52,7 @@ type ModelAggregates = {
   pozzed?: number;
   awsLogged?: number;
   awsSonnet?: number;
+  awsHaiku?: number;
   queued: number;
   queueTime: string;
   tokens: number;
@@ -82,7 +83,11 @@ type AnthropicInfo = BaseFamilyInfo & {
   prefilledKeys?: number;
   overQuotaKeys?: number;
 };
-type AwsInfo = BaseFamilyInfo & { privacy?: string; sonnetKeys?: number };
+type AwsInfo = BaseFamilyInfo & {
+  privacy?: string;
+  sonnetKeys?: number;
+  haikuKeys?: number;
+};
 
 // prettier-ignore
 export type ServiceInfo = {
@@ -90,13 +95,14 @@ export type ServiceInfo = {
   endpoints: {
     openai?: string;
     openai2?: string;
-    "openai-image"?: string;
     anthropic?: string;
     "anthropic-claude-3"?: string;
     "google-ai"?: string;
     "mistral-ai"?: string;
     aws?: string;
     azure?: string;
+    "openai-image"?: string;
+    "azure-image"?: string;
   };
   proompts?: number;
   tookens?: string;
@@ -149,6 +155,7 @@ const SERVICE_ENDPOINTS: { [s in LLMService]: Record<string, string> } = {
   },
   azure: {
     azure: `%BASE%/azure/openai`,
+    "azure-image": `%BASE%/azure/openai`,
   },
 };
 
@@ -216,13 +223,22 @@ function getStatus() {
 
 function getEndpoints(baseUrl: string, accessibleFamilies: Set<ModelFamily>) {
   const endpoints: Record<string, string> = {};
+  const keys = keyPool.list();
   for (const service of LLM_SERVICES) {
+    if (!keys.some((k) => k.service === service)) {
+      continue;
+    }
+
     for (const [name, url] of Object.entries(SERVICE_ENDPOINTS[service])) {
       endpoints[name] = url.replace("%BASE%", baseUrl);
     }
 
     if (service === "openai" && !accessibleFamilies.has("dall-e")) {
       delete endpoints["openai-image"];
+    }
+
+    if (service === "azure" && !accessibleFamilies.has("azure-dall-e")) {
+      delete endpoints["azure-image"];
     }
   }
   return endpoints;
@@ -376,6 +392,7 @@ function addKeyToAggregates(k: KeyPoolKey) {
       increment(modelStats, `${family}__revoked`, k.isRevoked ? 1 : 0);
       increment(modelStats, `${family}__tokens`, k["aws-claudeTokens"]);
       increment(modelStats, `${family}__awsSonnet`, k.sonnetEnabled ? 1 : 0);
+      increment(modelStats, `${family}__awsHaiku`, k.haikuEnabled ? 1 : 0);
 
       // Ignore revoked keys for aws logging stats, but include keys where the
       // logging status is unknown.
@@ -424,6 +441,7 @@ function getInfoForFamily(family: ModelFamily): BaseFamilyInfo {
         break;
       case "aws":
         info.sonnetKeys = modelStats.get(`${family}__awsSonnet`) || 0;
+        info.haikuKeys = modelStats.get(`${family}__awsHaiku`) || 0;
         const logged = modelStats.get(`${family}__awsLogged`) || 0;
         if (logged > 0) {
           info.privacy = config.allowAwsLogging

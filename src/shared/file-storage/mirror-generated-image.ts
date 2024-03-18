@@ -1,11 +1,11 @@
 import axios from "axios";
+import express from "express";
 import { promises as fs } from "fs";
 import path from "path";
 import { v4 } from "uuid";
 import { USER_ASSETS_DIR } from "../../config";
 import { addToImageHistory } from "./image-history";
 import { libSharp } from "./index";
-
 
 export type OpenAIImageGenerationResult = {
   created: number;
@@ -54,10 +54,11 @@ async function createThumbnail(filepath: string) {
  * Mutates the result object.
  */
 export async function mirrorGeneratedImage(
-  host: string,
+  req: express.Request,
   prompt: string,
   result: OpenAIImageGenerationResult
 ): Promise<OpenAIImageGenerationResult> {
+  const host = req.protocol + "://" + req.get("host");
   for (const item of result.data) {
     let mirror: string;
     if (item.b64_json) {
@@ -67,7 +68,11 @@ export async function mirrorGeneratedImage(
     }
     item.url = `${host}/user_content/${path.basename(mirror)}`;
     await createThumbnail(mirror);
-    addToImageHistory({ url: item.url, prompt });
+    addToImageHistory({
+      url: item.url,
+      prompt,
+      inputPrompt: req.body.prompt,
+      token: req.user?.token});
   }
   return result;
 }

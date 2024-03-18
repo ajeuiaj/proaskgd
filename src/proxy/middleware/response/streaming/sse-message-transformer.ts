@@ -3,6 +3,7 @@ import { logger } from "../../../../logger";
 import { APIFormat } from "../../../../shared/key-management";
 import { assertNever } from "../../../../shared/utils";
 import {
+  anthropicChatToOpenAI,
   anthropicChatToAnthropicV2,
   anthropicV1ToOpenAI,
   AnthropicV2StreamEvent,
@@ -19,6 +20,7 @@ type SSEMessageTransformerOptions = TransformOptions & {
   requestId: string;
   inputFormat: APIFormat;
   inputApiVersion?: string;
+  outputFormat?: APIFormat;
   logger: typeof logger;
 };
 
@@ -46,7 +48,8 @@ export class SSEMessageTransformer extends Transform {
     this.msgCount = 0;
     this.transformFn = getTransformer(
       options.inputFormat,
-      options.inputApiVersion
+      options.inputApiVersion,
+      options.outputFormat
     );
     this.inputFormat = options.inputFormat;
     this.fallbackId = options.requestId;
@@ -117,7 +120,11 @@ function eventIsOpenAIEvent(
 
 function getTransformer(
   responseApi: APIFormat,
-  version?: string
+  version?: string,
+  // There's only one case where we're not transforming back to OpenAI, which is
+  // Anthropic Chat response -> Anthropic Text request. This parameter is only
+  // used for that case.
+  requestApi: APIFormat = "openai"
 ): StreamingCompletionTransformer<
   OpenAIChatCompletionStreamEvent | AnthropicV2StreamEvent
 > {
@@ -132,7 +139,9 @@ function getTransformer(
         ? anthropicV1ToOpenAI
         : anthropicV2ToOpenAI;
     case "anthropic-chat":
-      return anthropicChatToAnthropicV2;
+      return requestApi === "anthropic-text"
+        ? anthropicChatToAnthropicV2
+        : anthropicChatToOpenAI;
     case "google-ai":
       return googleAIToOpenAI;
     case "openai-image":

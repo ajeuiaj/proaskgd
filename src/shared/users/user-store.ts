@@ -28,25 +28,10 @@ import { assertNever } from "../utils";
 
 const log = logger.child({ module: "users" });
 
-const INITIAL_TOKENS: Required<UserTokenCounts> = {
-  turbo: 0,
-  gpt4: 0,
-  "gpt4-32k": 0,
-  "gpt4-turbo": 0,
-  "dall-e": 0,
-  claude: 0,
-  "claude-opus": 0,
-  "gemini-pro": 0,
-  "mistral-tiny": 0,
-  "mistral-small": 0,
-  "mistral-medium": 0,
-  "mistral-large": 0,
-  "aws-claude": 0,
-  "azure-turbo": 0,
-  "azure-gpt4": 0,
-  "azure-gpt4-turbo": 0,
-  "azure-gpt4-32k": 0,
-};
+const INITIAL_TOKENS: Required<UserTokenCounts> = MODEL_FAMILIES.reduce(
+  (acc, family) => ({ ...acc, [family]: 0 }),
+  {} as Record<ModelFamily, number>
+);
 
 const users: Map<string, User> = new Map();
 const usersToFlush = new Set<string>();
@@ -338,12 +323,13 @@ function refreshAllQuotas() {
 // store to sync it with Firebase when it changes. Will refactor to abstract
 // persistence layer later so we can support multiple stores.
 let firebaseTimeout: NodeJS.Timeout | undefined;
+const USERS_REF = process.env.FIREBASE_USERS_REF_NAME ?? "users";
 
 async function initFirebase() {
   log.info("Connecting to Firebase...");
   const app = getFirebaseApp();
   const db = admin.database(app);
-  const usersRef = db.ref("users");
+  const usersRef = db.ref(USERS_REF);
   const snapshot = await usersRef.once("value");
   const users: Record<string, User> | null = snapshot.val();
   firebaseTimeout = setInterval(flushUsers, 20 * 1000);
@@ -362,7 +348,7 @@ async function initFirebase() {
 async function flushUsers() {
   const app = getFirebaseApp();
   const db = admin.database(app);
-  const usersRef = db.ref("users");
+  const usersRef = db.ref(USERS_REF);
   const updates: Record<string, User> = {};
   const deletions = [];
 

@@ -1,3 +1,4 @@
+import express from "express";
 import { pipeline, Readable, Transform } from "stream";
 import StreamArray from "stream-json/streamers/StreamArray";
 import { StringDecoder } from "string_decoder";
@@ -6,7 +7,6 @@ import { APIFormat, keyPool } from "../../../shared/key-management";
 import {
   copySseResponseHeaders,
   initializeSseStream,
-
 } from "../../../shared/streaming";
 import type { logger } from "../../../logger";
 import { enqueue } from "../../queue";
@@ -15,7 +15,8 @@ import { getAwsEventStreamDecoder } from "./streaming/aws-event-stream-decoder";
 import { EventAggregator } from "./streaming/event-aggregator";
 import { SSEMessageTransformer } from "./streaming/sse-message-transformer";
 import { SSEStreamAdapter } from "./streaming/sse-stream-adapter";
-import { buildSpoofedSSE } from "./error-generator";
+import { buildSpoofedSSE, sendErrorToClient } from "./error-generator";
+import { BadRequestError } from "../../../shared/errors";
 
 const pipelineAsync = promisify(pipeline);
 
@@ -52,10 +53,7 @@ export const handleStreamedResponse: RawResponseBodyHandler = async (
     return decodeResponseBody(proxyRes, req, res);
   }
 
-  req.log.debug(
-    { headers: proxyRes.headers, key: hash },
-    `Starting to proxy SSE stream.`
-  );
+  req.log.debug({ headers: proxyRes.headers }, `Starting to proxy SSE stream.`);
 
   // Typically, streaming will have already been initialized by the request
   // queue to send heartbeat pings.
@@ -81,7 +79,8 @@ export const handleStreamedResponse: RawResponseBodyHandler = async (
   // Transformer converts server-sent events from one vendor's API message
   // format to another.
   const transformer = new SSEMessageTransformer({
-    inputFormat: req.outboundApi,
+    inputFormat: req.outboundApi, // The format of the upstream service's events
+    outputFormat: req.inboundApi, // The format the client requested
     inputApiVersion: String(req.headers["anthropic-version"]),
     logger: req.log,
     requestId: String(req.id),
@@ -96,8 +95,11 @@ export const handleStreamedResponse: RawResponseBodyHandler = async (
     });
 
   try {
-    await pipelineAsync(proxyRes, decoder, adapter, transformer);
-    req.log.debug({ key: hash }, `Finished proxying SSE stream.`);
+    await Promise.race([
+      handleAbortedStream(req, res),
+      pipelineAsync(proxyRes, decoder, adapter, transformer),
+    ]);
+    req.log.debug(`Finished proxying SSE stream.`);
     res.end();
     return aggregator.getFinalResponse();
   } catch (err) {
@@ -109,6 +111,18 @@ export const handleStreamedResponse: RawResponseBodyHandler = async (
       );
       req.retryCount++;
       await enqueue(req);
+    } else if (err instanceof BadRequestError) {
+      sendErrorToClient({
+        req,
+        res,
+        options: {
+          format: req.inboundApi,
+          title: "Proxy streaming error (Bad Request)",
+          message: `The API returned an error while streaming your request. Your prompt might not be formatted correctly.\n\n*${err.message}*`,
+          reqId: req.id,
+          model: req.body?.model,
+        },
+      });
     } else {
       const { message, stack, lastEvent } = err;
       const eventText = JSON.stringify(lastEvent, null, 2) ?? "undefined";
@@ -127,6 +141,17 @@ export const handleStreamedResponse: RawResponseBodyHandler = async (
     throw err;
   }
 };
+
+function handleAbortedStream(req: express.Request, res: express.Response) {
+  return new Promise<void>((resolve) =>
+    res.on("close", () => {
+      if (!res.writableEnded) {
+        req.log.info("Client prematurely closed connection during stream.");
+      }
+      resolve();
+    })
+  );
+}
 
 function getDecoder(options: {
   input: Readable;

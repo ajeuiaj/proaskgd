@@ -1,24 +1,11 @@
-/* Manages OpenAI API keys. Tracks usage, disables expired keys, and provides
-round-robin access to keys. Keys are stored in the OPENAI_KEY environment
-variable as a comma-separated list of keys. */
 import crypto from "crypto";
 import http from "http";
-import { Key, KeyProvider, Model } from "../index";
+import { Key, KeyProvider } from "../index";
 import { config } from "../../../config";
 import { logger } from "../../../logger";
 import { OpenAIKeyChecker } from "./checker";
 import { getOpenAIModelFamily, OpenAIModelFamily } from "../../models";
-import { HttpError } from "../../errors";
-
-export type OpenAIModel =
-  | "gpt-3.5-turbo"
-  | "gpt-3.5-turbo-instruct"
-  | "gpt-4"
-  | "gpt-4-32k"
-  | "gpt-4-1106"
-  | "text-embedding-ada-002"
-  | "dall-e-2"
-  | "dall-e-3";
+import { PaymentRequiredError } from "../../errors";
 
 // Flattening model families instead of using a nested object for easier
 // cloning.
@@ -67,6 +54,10 @@ export interface OpenAIKey extends Key, OpenAIKeyUsage {
    * This key's maximum request rate for GPT-4, per minute.
    */
   gpt4Rpm: number;
+  /**
+   * Model snapshots available.
+   */
+  modelSnapshots: string[];
 }
 
 export type OpenAIKeyUpdate = Omit<
@@ -127,6 +118,7 @@ export class OpenAIKeyProvider implements KeyProvider<OpenAIKey> {
         "gpt4-turboTokens": 0,
         "dall-eTokens": 0,
         gpt4Rpm: 0,
+        modelSnapshots: [],
       };
       this.keys.push(newKey);
     }
@@ -155,22 +147,32 @@ export class OpenAIKeyProvider implements KeyProvider<OpenAIKey> {
     });
   }
 
-  public get(model: Model) {
+  public get(requestModel: string) {
+    let model = requestModel;
+
+    // Special case for GPT-4-32k. Some keys have access to only gpt4-32k-0314
+    // but not gpt-4-32k-0613, or its alias gpt-4-32k. Because we add a model
+    // family if a key has any snapshot, we need to dealias gpt-4-32k here so
+    // we can look for the specific snapshot.
+    // gpt-4-32k is superceded by gpt4-turbo so this shouldn't ever change.
+    if (model === "gpt-4-32k") model = "gpt-4-32k-0613";
+
     const neededFamily = getOpenAIModelFamily(model);
     const excludeTrials = model === "text-embedding-ada-002";
+    const needsSnapshot = model.match(/-\d{4}(-preview)?$/);
 
     const availableKeys = this.keys.filter(
       // Allow keys which
       (key) =>
         !key.isDisabled && // are not disabled
-        key.modelFamilies.includes(neededFamily) && // have access to the model
-        (!excludeTrials || !key.isTrial) // and are not trials (if applicable)
+        key.modelFamilies.includes(neededFamily) && // have access to the model family we need
+        (!excludeTrials || !key.isTrial) && // and are not trials if we don't want them
+        (!needsSnapshot || key.modelSnapshots.includes(model)) // and have the specific snapshot we need
     );
 
     if (availableKeys.length === 0) {
-      throw new HttpError(
-        402,
-        `No keys available for model family '${neededFamily}'.`
+      throw new PaymentRequiredError(
+        `No keys can fulfill request for ${model}`
       );
     }
 

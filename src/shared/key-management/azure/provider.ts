@@ -1,14 +1,11 @@
 import crypto from "crypto";
 import { Key, KeyProvider } from "..";
 import { config } from "../../../config";
+import { PaymentRequiredError } from "../../errors";
 import { logger } from "../../../logger";
 import type { AzureOpenAIModelFamily } from "../../models";
 import { getAzureOpenAIModelFamily } from "../../models";
-import { OpenAIModel } from "../openai/provider";
 import { AzureOpenAIKeyChecker } from "./checker";
-import { HttpError } from "../../errors";
-
-export type AzureOpenAIModel = Exclude<OpenAIModel, "dall-e">;
 
 type AzureOpenAIKeyUsage = {
   [K in AzureOpenAIModelFamily as `${K}Tokens`]: number;
@@ -75,6 +72,7 @@ export class AzureOpenAIKeyProvider implements KeyProvider<AzureOpenAIKey> {
         "azure-gpt4Tokens": 0,
         "azure-gpt4-32kTokens": 0,
         "azure-gpt4-turboTokens": 0,
+        "azure-dall-eTokens": 0,
       };
       this.keys.push(newKey);
     }
@@ -95,14 +93,13 @@ export class AzureOpenAIKeyProvider implements KeyProvider<AzureOpenAIKey> {
     return this.keys.map((k) => Object.freeze({ ...k, key: undefined }));
   }
 
-  public get(model: AzureOpenAIModel) {
+  public get(model: string) {
     const neededFamily = getAzureOpenAIModelFamily(model);
     const availableKeys = this.keys.filter(
       (k) => !k.isDisabled && k.modelFamilies.includes(neededFamily)
     );
     if (availableKeys.length === 0) {
-      throw new HttpError(
-        402,
+      throw new PaymentRequiredError(
         `No keys available for model family '${neededFamily}'.`
       );
     }

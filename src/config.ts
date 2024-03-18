@@ -306,6 +306,7 @@ export const config: Config = {
     "gpt4-32k",
     "gpt4-turbo",
     "claude",
+    "claude-opus",
     "gemini-pro",
     "mistral-tiny",
     "mistral-small",

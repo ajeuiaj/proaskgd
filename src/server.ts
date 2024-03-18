@@ -13,6 +13,7 @@ import { keyPool } from "./shared/key-management";
 import { adminRouter } from "./admin/routes";
 import { proxyRouter } from "./proxy/routes";
 import { infoPageRouter } from "./info-page";
+import { IMAGE_GEN_MODELS } from "./shared/models";
 import { userRouter } from "./user/routes";
 import { logQueue } from "./shared/prompt-logging";
 import { start as startRequestQueue } from "./proxy/queue";
@@ -60,7 +61,7 @@ app.set("views", [
   path.join(__dirname, "shared/views"),
 ]);
 
-app.use("/user_content", express.static(USER_ASSETS_DIR));
+app.use("/user_content", express.static(USER_ASSETS_DIR, { maxAge: "2h" }));
 
 app.get("/health", (_req, res) => res.sendStatus(200));
 app.use(cors());
@@ -111,7 +112,7 @@ async function start() {
 
   await initTokenizers();
 
-  if (config.allowedModelFamilies.includes("dall-e")) {
+  if (config.allowedModelFamilies.some((f) => IMAGE_GEN_MODELS.includes(f))) {
     await setupAssetsDir();
   }
 
