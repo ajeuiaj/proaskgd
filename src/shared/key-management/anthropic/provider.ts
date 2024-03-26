@@ -4,7 +4,7 @@ import { config } from "../../../config";
 import { logger } from "../../../logger";
 import { AnthropicModelFamily, getClaudeModelFamily } from "../../models";
 import { AnthropicKeyChecker } from "./checker";
-import { HttpError, PaymentRequiredError } from "../../errors";
+import { PaymentRequiredError } from "../../errors";
 
 export type AnthropicKeyUpdate = Omit<
   Partial<AnthropicKey>,
@@ -45,13 +45,40 @@ export interface AnthropicKey extends Key, AnthropicKeyUsage {
    */
   isPozzed: boolean;
   isOverQuota: boolean;
+  allowsMultimodality: boolean;
+  /**
+   * Key billing tier (https://docs.anthropic.com/claude/reference/rate-limits)
+   **/
+  tier: (typeof TIER_PRIORITY)[number];
 }
 
 /**
- * Upon being rate limited, a key will be locked out for this many milliseconds
- * while we wait for other concurrent requests to finish.
+ * Selection priority for Anthropic keys. Aims to maximize throughput by
+ * saturating concurrency-limited keys first, then trying keys with increasingly
+ * strict rate limits. Free keys have very limited throughput and are used last.
  */
-const RATE_LIMIT_LOCKOUT = 2000;
+const TIER_PRIORITY = [
+  "unknown",
+  "scale",
+  "build_4",
+  "build_3",
+  "build_2",
+  "build_1",
+  "free",
+] as const;
+
+/**
+ * Upon being rate limited, a Scale-tier key will be locked out for this many
+ * milliseconds while we wait for other concurrent requests to finish.
+ */
+const SCALE_RATE_LIMIT_LOCKOUT = 2000;
+/**
+ * Upon being rate limited, a Build-tier key will be locked out for this many
+ * milliseconds while we wait for the per-minute rate limit to reset. Because
+ * the reset provided in the headers specifies the time for the full quota to
+ * become available, the key may become available before that time.
+ */
+const BUILD_RATE_LIMIT_LOCKOUT = 10000;
 /**
  * Upon assigning a key, we will wait this many milliseconds before allowing it
  * to be used again. This is to prevent the queue from flooding a key with too
@@ -85,6 +112,7 @@ export class AnthropicKeyProvider implements KeyProvider<AnthropicKey> {
         isOverQuota: false,
         isRevoked: false,
         isPozzed: false,
+        allowsMultimodality: true,
         promptCount: 0,
         lastUsed: 0,
         rateLimitedAt: 0,
@@ -98,6 +126,7 @@ export class AnthropicKeyProvider implements KeyProvider<AnthropicKey> {
         lastChecked: 0,
         claudeTokens: 0,
         "claude-opusTokens": 0,
+        tier: "unknown",
       };
       this.keys.push(newKey);
     }
@@ -115,33 +144,43 @@ export class AnthropicKeyProvider implements KeyProvider<AnthropicKey> {
     return this.keys.map((k) => Object.freeze({ ...k, key: undefined }));
   }
 
-  public get(_model: string) {
-    // Currently, all Anthropic keys have access to all models. This will almost
-    // certainly change when they move out of beta later this year.
-    const availableKeys = this.keys.filter((k) => !k.isDisabled);
+  public get(rawModel: string) {
+    this.log.debug({ model: rawModel }, "Selecting key");
+    const needsMultimodal = rawModel.endsWith("-multimodal");
+
+    const availableKeys = this.keys.filter((k) => {
+      return !k.isDisabled && (!needsMultimodal || k.allowsMultimodality);
+    });
+
     if (availableKeys.length === 0) {
-      throw new PaymentRequiredError("No Anthropic keys available.");
+      throw new PaymentRequiredError(
+        needsMultimodal
+          ? "No multimodal Anthropic keys available. Please disable multimodal input (such as inline images) and try again."
+          : "No Anthropic keys available."
+      );
     }
 
-    // (largely copied from the OpenAI provider, without trial key support)
     // Select a key, from highest priority to lowest priority:
-    // 1. Keys which are not rate limited
-    //    a. If all keys were rate limited recently, select the least-recently
-    //       rate limited key.
-    // 2. Keys which are not pozzed
-    // 3. Keys which have not been used in the longest time
+    // 1. Keys which are not rate limit locked
+    // 2. Keys with the highest tier
+    // 3. Keys which are not pozzed
+    // 4. Keys which have not been used in the longest time
 
     const now = Date.now();
 
     const keysByPriority = availableKeys.sort((a, b) => {
-      const aRateLimited = now - a.rateLimitedAt < RATE_LIMIT_LOCKOUT;
-      const bRateLimited = now - b.rateLimitedAt < RATE_LIMIT_LOCKOUT;
+      const aLockoutPeriod = getKeyLockout(a);
+      const bLockoutPeriod = getKeyLockout(b);
+
+      const aRateLimited = now - a.rateLimitedAt < aLockoutPeriod;
+      const bRateLimited = now - b.rateLimitedAt < bLockoutPeriod;
 
       if (aRateLimited && !bRateLimited) return 1;
       if (!aRateLimited && bRateLimited) return -1;
-      if (aRateLimited && bRateLimited) {
-        return a.rateLimitedAt - b.rateLimitedAt;
-      }
+
+      const aTierIndex = TIER_PRIORITY.indexOf(a.tier);
+      const bTierIndex = TIER_PRIORITY.indexOf(b.tier);
+      if (aTierIndex > bTierIndex) return -1;
 
       if (a.isPozzed && !b.isPozzed) return 1;
       if (!a.isPozzed && b.isPozzed) return -1;
@@ -207,7 +246,7 @@ export class AnthropicKeyProvider implements KeyProvider<AnthropicKey> {
     const key = this.keys.find((k) => k.hash === keyHash)!;
     const now = Date.now();
     key.rateLimitedAt = now;
-    key.rateLimitedUntil = now + RATE_LIMIT_LOCKOUT;
+    key.rateLimitedUntil = now + SCALE_RATE_LIMIT_LOCKOUT;
   }
 
   public recheck() {
@@ -238,4 +277,10 @@ export class AnthropicKeyProvider implements KeyProvider<AnthropicKey> {
     key.rateLimitedAt = now;
     key.rateLimitedUntil = Math.max(currentRateLimit, nextRateLimit);
   }
+}
+
+function getKeyLockout(key: AnthropicKey) {
+  return ["scale", "unknown"].includes(key.tier)
+    ? SCALE_RATE_LIMIT_LOCKOUT
+    : BUILD_RATE_LIMIT_LOCKOUT;
 }

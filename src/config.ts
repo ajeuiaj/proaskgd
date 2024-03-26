@@ -260,6 +260,14 @@ type Config = {
    * A leading slash is required.
    */
   proxyEndpointRoute: string;
+    /**
+   * Whether to allow prompts containing images, for use with multimodal models.
+   * Avoid giving this to untrusted users, as they can submit illegal content.
+   *
+   * Applies to GPT-4 Vision and Claude Vision. Users with `special` role are
+   * exempt from this restriction.
+   */
+    allowImagePrompts?: boolean;
 };
 
 // To change configs, create a file called .env in the root directory.
@@ -281,6 +289,7 @@ export const config: Config = {
   maxIpsPerUser: getEnvWithDefault("MAX_IPS_PER_USER", 0),
   maxIpsAutoBan: getEnvWithDefault("MAX_IPS_AUTO_BAN", true),
   firebaseRtdbUrl: getEnvWithDefault("FIREBASE_RTDB_URL", undefined),
+  allowImagePrompts: getEnvWithDefault("ALLOW_IMAGE_PROMPTS", false),
   firebaseKey: getEnvWithDefault("FIREBASE_KEY", undefined),
   promptLoggingMaxFileSize: getEnvWithDefault("MAX_FILE_SIZE", 10),
   promptLoggingFilecount: getEnvWithDefault("MAX_FILE_COUNT", 2),

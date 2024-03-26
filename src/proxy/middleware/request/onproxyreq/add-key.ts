@@ -1,3 +1,5 @@
+import { AnthropicChatMessage } from "../../../../shared/api-schemas";
+import { containsImageContent } from "../../../../shared/api-schemas/anthropic";
 import { Key, OpenAIKey, keyPool } from "../../../../shared/key-management";
 import { isEmbeddingsRequest } from "../../common";
 import { HPMRequestCallback } from "../index";
@@ -19,17 +21,24 @@ export const addKey: HPMRequestCallback = (proxyReq, req) => {
     throw new Error("You must specify a model with your request.");
   }
 
+  let needsMultimodal = false;
+  if (outboundApi === "anthropic-chat") {
+    needsMultimodal = containsImageContent(
+      body.messages as AnthropicChatMessage[]
+    );
+  }
+
   if (inboundApi === outboundApi) {
-    assignedKey = keyPool.get(body.model, service);
+    assignedKey = keyPool.get(body.model, service, needsMultimodal);
   } else {
     switch (outboundApi) {
       // If we are translating between API formats we may need to select a model
       // for the user, because the provided model is for the inbound API.
       // TODO: This whole else condition is probably no longer needed since API
       // translation now reassigns the model earlier in the request pipeline.
-      case "anthropic-chat":
       case "anthropic-text":
-        assignedKey = keyPool.get("claude-v1", service);
+      case "anthropic-chat":
+        assignedKey = keyPool.get("claude-v1", service, needsMultimodal);
         break;
       case "openai-text":
         assignedKey = keyPool.get("gpt-3.5-turbo-instruct", service);
