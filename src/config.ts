@@ -256,18 +256,18 @@ type Config = {
    */
   allowOpenAIToolUsage?: boolean;
   /**
-   * Allows overriding the default proxy endpoint route. Defaults to /proxy.
-   * A leading slash is required.
-   */
-  proxyEndpointRoute: string;
-    /**
    * Whether to allow prompts containing images, for use with multimodal models.
    * Avoid giving this to untrusted users, as they can submit illegal content.
    *
    * Applies to GPT-4 Vision and Claude Vision. Users with `special` role are
    * exempt from this restriction.
    */
-    allowImagePrompts?: boolean;
+  allowImagePrompts?: boolean;
+  /**
+   * Allows overriding the default proxy endpoint route. Defaults to /proxy.
+   * A leading slash is required.
+   */
+  proxyEndpointRoute: string;
 };
 
 // To change configs, create a file called .env in the root directory.
@@ -289,7 +289,6 @@ export const config: Config = {
   maxIpsPerUser: getEnvWithDefault("MAX_IPS_PER_USER", 0),
   maxIpsAutoBan: getEnvWithDefault("MAX_IPS_AUTO_BAN", true),
   firebaseRtdbUrl: getEnvWithDefault("FIREBASE_RTDB_URL", undefined),
-  allowImagePrompts: getEnvWithDefault("ALLOW_IMAGE_PROMPTS", false),
   firebaseKey: getEnvWithDefault("FIREBASE_KEY", undefined),
   promptLoggingMaxFileSize: getEnvWithDefault("MAX_FILE_SIZE", 10),
   promptLoggingFilecount: getEnvWithDefault("MAX_FILE_COUNT", 2),
@@ -322,6 +321,7 @@ export const config: Config = {
     "mistral-medium",
     "mistral-large",
     "aws-claude",
+    "aws-claude-opus",
     "azure-turbo",
     "azure-gpt4",
     "azure-gpt4-turbo",
@@ -366,6 +366,7 @@ export const config: Config = {
   staticServiceInfo: getEnvWithDefault("STATIC_SERVICE_INFO", false),
   trustedProxies: getEnvWithDefault("TRUSTED_PROXIES", 1),
   allowOpenAIToolUsage: getEnvWithDefault("ALLOW_OPENAI_TOOL_USAGE", false),
+  allowImagePrompts: getEnvWithDefault("ALLOW_IMAGE_PROMPTS", false),
   proxyEndpointRoute: getEnvWithDefault("PROXY_ENDPOINT_ROUTE", "/proxy"),
 } as const;
 
