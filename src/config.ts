@@ -149,13 +149,9 @@ type Config = {
   /** Whether prompts and responses should be logged to persistent storage. */
   promptLogging?: boolean;
   /** Which prompt logging backend to use. */
-  promptLoggingBackend?: "google_sheets";
-  /** Max file size for each jsonl file. */
-  promptLoggingMaxFileSize: number;
-  /** Number of jsonl files to maintain before stopping the logging. */
-  promptLoggingFilecount: number;
-  /** Prefix for jsonl log files. */
-  promptLoggingPrefix: string;
+  promptLoggingBackend?: "google_sheets" | "file";
+  /** Prefix for prompt logging files when using the file backend. */
+  promptLoggingFilePrefix?: string;
   /** Base64-encoded Google Sheets API key. */
   googleSheetsKey?: string;
   /** Google Sheets spreadsheet ID. */
@@ -290,9 +286,6 @@ export const config: Config = {
   maxIpsAutoBan: getEnvWithDefault("MAX_IPS_AUTO_BAN", true),
   firebaseRtdbUrl: getEnvWithDefault("FIREBASE_RTDB_URL", undefined),
   firebaseKey: getEnvWithDefault("FIREBASE_KEY", undefined),
-  promptLoggingMaxFileSize: getEnvWithDefault("MAX_FILE_SIZE", 10),
-  promptLoggingFilecount: getEnvWithDefault("MAX_FILE_COUNT", 2),
-  promptLoggingPrefix: getEnvWithDefault("LOG_PREFIX", 'log_'),
   textModelRateLimit: getEnvWithDefault("TEXT_MODEL_RATE_LIMIT", 4),
   imageModelRateLimit: getEnvWithDefault("IMAGE_MODEL_RATE_LIMIT", 4),
   maxContextTokensOpenAI: getEnvWithDefault("MAX_CONTEXT_TOKENS_OPENAI", 16384),
@@ -338,6 +331,10 @@ export const config: Config = {
   allowAwsLogging: getEnvWithDefault("ALLOW_AWS_LOGGING", false),
   promptLogging: getEnvWithDefault("PROMPT_LOGGING", false),
   promptLoggingBackend: getEnvWithDefault("PROMPT_LOGGING_BACKEND", undefined),
+  promptLoggingFilePrefix: getEnvWithDefault(
+    "PROMPT_LOGGING_FILE_PREFIX",
+    "prompt-logs"
+  ),
   googleSheetsKey: getEnvWithDefault("GOOGLE_SHEETS_KEY", undefined),
   googleSheetsSpreadsheetId: getEnvWithDefault(
     "GOOGLE_SHEETS_SPREADSHEET_ID",
@@ -393,6 +390,12 @@ export async function assertConfigIsValid() {
     startupLogger.warn(
       { textLimit: limit, imageLimit: config.imageModelRateLimit },
       "MODEL_RATE_LIMIT is deprecated. Use TEXT_MODEL_RATE_LIMIT and IMAGE_MODEL_RATE_LIMIT instead."
+    );
+  }
+
+  if (config.promptLogging && !config.promptLoggingBackend) {
+    throw new Error(
+      "Prompt logging is enabled but no backend is configured. Set PROMPT_LOGGING_BACKEND to 'google_sheets' or 'file'."
     );
   }
 
@@ -472,6 +475,7 @@ export const OMITTED_KEYS = [
   "rejectPhrases",
   "rejectMessage",
   "showTokenCosts",
+  "promptLoggingFilePrefix",
   "googleSheetsKey",
   "firebaseKey",
   "firebaseRtdbUrl",
@@ -486,7 +490,6 @@ export const OMITTED_KEYS = [
   "staticServiceInfo",
   "checkKeys",
   "allowedModelFamilies",
-  "promptLoggingPrefix",
   "trustedProxies",
   "proxyEndpointRoute",
 ] satisfies (keyof Config)[];

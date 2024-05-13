@@ -2,8 +2,10 @@
  * logging backend. */
 
 import { logger } from "../../logger";
-import { PromptLogEntry } from ".";
-import { fileBackend, islogging } from "./backends/files";
+import { LogBackend, PromptLogEntry } from ".";
+import { sheets, file } from "./backends";
+import { config } from "../../config";
+import { assertNever } from "../utils";
 
 const FLUSH_INTERVAL = 1000 * 10;
 const MAX_BATCH_SIZE = 25;
@@ -15,6 +17,7 @@ let started = false;
 let timeoutId: NodeJS.Timeout | null = null;
 let retrying = false;
 let consecutiveFailedBatches = 0;
+let backend: LogBackend;
 
 export const enqueue = (payload: PromptLogEntry) => {
   if (!started) {
@@ -29,19 +32,12 @@ export const flush = async () => {
     return;
   }
 
-  if (!islogging) {
-    // the console will get spammed with log.warn("Log queue not started, discarding incoming log entry."); if you try to use stop(); needs a rewrite
-    // this just works
-    log.info("Maximum file number reached.")
-    return;
-  }
-
   if (queue.length > 0) {
     const batchSize = Math.min(MAX_BATCH_SIZE, queue.length);
     const nextBatch = queue.splice(0, batchSize);
     log.info({ size: nextBatch.length }, "Submitting new batch.");
     try {
-      await fileBackend.appendBatch(nextBatch);
+      await backend.appendBatch(nextBatch);
       retrying = false;
       consecutiveFailedBatches = 0;
     } catch (e: any) {
@@ -71,8 +67,20 @@ export const flush = async () => {
 };
 
 export const start = async () => {
+  const type = config.promptLoggingBackend!;
   try {
-    await fileBackend.init(() => stop());
+    switch (type) {
+      case "google_sheets":
+        backend = sheets;
+        await sheets.init(() => stop());
+        break;
+      case "file":
+        backend = file;
+        await file.init(() => stop());
+        break;
+      default:
+        assertNever(type)
+    }
     log.info("Logging backend initialized.");
     started = true;
   } catch (e) {
