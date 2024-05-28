@@ -8,6 +8,7 @@ import pinoHttp from "pino-http";
 import os from "os";
 import childProcess from "child_process";
 import { logger } from "./logger";
+import { createBlacklistMiddleware } from "./shared/cidr";
 import { setupAssetsDir } from "./shared/file-storage/setup-assets-dir";
 import { keyPool } from "./shared/key-management";
 import { adminRouter } from "./admin/routes";
@@ -21,6 +22,7 @@ import { init as initUserStore } from "./shared/users/user-store";
 import { init as initTokenizers } from "./shared/tokenization";
 import { checkOrigin } from "./proxy/check-origin";
 import { sendErrorToClient } from "./proxy/middleware/response/error-generator";
+import { initializeDatabase, getDatabase } from "./shared/database";
 
 const PORT = config.port;
 const BIND_ADDRESS = config.bindAddress;
@@ -31,13 +33,19 @@ app.use(
   pinoHttp({
     quietReqLogger: true,
     logger,
-    autoLogging: { ignore: ({ url }) => ["/health"].includes(url as string) },
+    autoLogging: {
+      ignore: ({ url }) => {
+        const ignoreList = ["/health", "/res", "/user_content"];
+        return ignoreList.some((path) => (url as string).startsWith(path));
+      },
+    },
     redact: {
       paths: [
         "req.headers.cookie",
         'res.headers["set-cookie"]',
         "req.headers.authorization",
         'req.headers["x-api-key"]',
+        'req.headers["api-key"]',
         // Don't log the prompt text on transform errors
         "body.messages",
         "body.prompt",
@@ -62,9 +70,20 @@ app.set("views", [
 ]);
 
 app.use("/user_content", express.static(USER_ASSETS_DIR, { maxAge: "2h" }));
+app.use(
+  "/res",
+  express.static(path.join(__dirname, "..", "public"), {
+    maxAge: "2h",
+    etag: false,
+  })
+);
 
 app.get("/health", (_req, res) => res.sendStatus(200));
 app.use(cors());
+
+const blacklist = createBlacklistMiddleware("IP_BLACKLIST", config.ipBlacklist);
+app.use(blacklist);
+
 app.use(checkOrigin);
 
 app.use("/admin", adminRouter);
@@ -125,6 +144,8 @@ async function start() {
     await logQueue.start();
   }
 
+  await initializeDatabase();
+
   logger.info("Starting request queue...");
   startRequestQueue();
 
@@ -145,6 +166,20 @@ async function start() {
     "Startup complete."
   );
 }
+
+function cleanup() {
+  console.log("Shutting down...");
+  if (config.eventLogging) {
+    try {
+      const db = getDatabase();
+      db.close();
+      console.log("Closed sqlite database.");
+    } catch (error) {}
+  }
+  process.exit(0);
+}
+
+process.on("SIGINT", cleanup);
 
 function registerUncaughtExceptionHandler() {
   process.on("uncaughtException", (err: any) => {

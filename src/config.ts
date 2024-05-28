@@ -1,3 +1,4 @@
+import crypto from "crypto";
 import dotenv from "dotenv";
 import type firebase from "firebase-admin";
 import path from "path";
@@ -107,9 +108,70 @@ type Config = {
    * `maxIpsPerUser` limit, or if only connections from new IPs are be rejected.
    */
   maxIpsAutoBan: boolean;
-  /** Per-IP limit for requests per minute to text and chat models. */
+  /**
+   * Which captcha verification mode to use. Requires `user_token` gatekeeper.
+   * Allows users to automatically obtain a token by solving a captcha.
+   * - `none`: No captcha verification; tokens are issued manually.
+   * - `proof_of_work`: Users must solve an Argon2 proof of work to obtain a
+   *    temporary usertoken valid for a limited period.
+   */
+  captchaMode: "none" | "proof_of_work";
+  /**
+   * Duration (in hours) for which a PoW-issued temporary user token is valid.
+   */
+  powTokenHours: number;
+  /**
+   * The maximum number of IPs from which a single temporary user token can be
+   * used. Upon reaching the limit, the `maxIpsAutoBan` behavior is triggered.
+   */
+  powTokenMaxIps: number;
+  /**
+   * Difficulty level for the proof-of-work challenge.
+   * - `low`: 200 iterations
+   * - `medium`: 900 iterations
+   * - `high`: 1900 iterations
+   * - `extreme`: 4000 iterations
+   * - `number`: A custom number of iterations to use.
+   *
+   * Difficulty level only affects the number of iterations used in the PoW,
+   * not the complexity of the hash itself. Therefore, the average time-to-solve
+   * will scale linearly with the number of iterations.
+   *
+   * Refer to docs/proof-of-work.md for guidance and hashrate benchmarks.
+   */
+  powDifficultyLevel: "low" | "medium" | "high" | "extreme" | number;
+  /**
+   * Duration (in minutes) before a PoW challenge expires. Users' browsers must
+   * solve the challenge within this time frame or it will be rejected. Should
+   * be kept somewhat low to prevent abusive clients from working on many
+   * challenges in parallel, but you may need to increase this value for higher
+   * difficulty levels or older devices will not be able to solve the challenge
+   * in time.
+   *
+   * Defaults to 30 minutes.
+   */
+  powChallengeTimeout: number;
+  /**
+   * Duration (in hours) before expired temporary user tokens are purged from
+   * the user database. Users can refresh expired tokens by solving a faster PoW
+   * challenge as long as the original token has not been purged. Once purged,
+   * the user must solve a full PoW challenge to obtain a new token.
+   *
+   * Defaults to 48 hours. At 0, tokens are purged immediately upon expiry.
+   */
+  powTokenPurgeHours: number;
+  /**
+   * Maximum number of active temporary user tokens that can be associated with
+   * a single IP address. Note that this may impact users sending requests from
+   * hosted AI chat clients such as Agnaistic or RisuAI, as they may share IPs.
+   *
+   * When the limit is reached, the oldest token with the same IP will be
+   * expired. At 0, no limit is enforced. Defaults to 0.
+   */
+  // powMaxTokensPerIp: number;
+  /** Per-user limit for requests per minute to text and chat models. */
   textModelRateLimit: number;
-  /** Per-IP limit for requests per minute to image generation models. */
+  /** Per-user limit for requests per minute to image generation models. */
   imageModelRateLimit: number;
   /**
    * For OpenAI, the maximum number of context tokens (prompt + max output) a
@@ -146,6 +208,32 @@ type Config = {
    * key and can't attach the policy, you can set this to true.
    */
   allowAwsLogging?: boolean;
+  /**
+   * Path to the SQLite database file for storing data such as event logs. By
+   * default, the database will be stored at `data/database.sqlite`.
+   *
+   * Ensure target is writable by the server process, and be careful not to
+   * select a path that is served publicly. The default path is safe.
+   */
+  sqliteDataPath?: string;
+  /**
+   * Whether to log events, such as generated completions, to the database.
+   * Events are associated with IP+user token pairs. If user_token mode is
+   * disabled, no events will be logged.
+   *
+   * Currently there is no pruning mechanism for the events table, so it will
+   * grow indefinitely. You may want to periodically prune the table manually.
+   */
+  eventLogging?: boolean;
+  /**
+   * When hashing prompt histories, how many messages to trim from the end.
+   * If zero, only the full prompt hash will be stored.
+   * If greater than zero, for each number N, a hash of the prompt with the
+   * last N messages removed will be stored.
+   *
+   * Experimental function, config may change in future versions.
+   */
+  eventLoggingTrim?: number;
   /** Whether prompts and responses should be logged to persistent storage. */
   promptLogging?: boolean;
   /** Which prompt logging backend to use. */
@@ -264,6 +352,20 @@ type Config = {
    * A leading slash is required.
    */
   proxyEndpointRoute: string;
+  /**
+   * If set, only requests from these IP addresses will be permitted to use the
+   * admin API and UI. Provide a comma-separated list of IP addresses or CIDR
+   * ranges. If not set, the admin API and UI will be open to all requests.
+   */
+  adminWhitelist: string[];
+  /**
+   * If set, requests from these IP addresses will be blocked from using the
+   * application. Provide a comma-separated list of IP addresses or CIDR ranges.
+   * If not set, no IP addresses will be blocked.
+   *
+   * Takes precedence over the adminWhitelist.
+   */
+  ipBlacklist: string[];
 };
 
 // To change configs, create a file called .env in the root directory.
@@ -280,10 +382,22 @@ export const config: Config = {
   proxyKey: getEnvWithDefault("PROXY_KEY", ""),
   adminKey: getEnvWithDefault("ADMIN_KEY", ""),
   serviceInfoPassword: getEnvWithDefault("SERVICE_INFO_PASSWORD", ""),
+  sqliteDataPath: getEnvWithDefault(
+    "SQLITE_DATA_PATH",
+    path.join(DATA_DIR, "database.sqlite")
+  ),
+  eventLogging: getEnvWithDefault("EVENT_LOGGING", false),
+  eventLoggingTrim: getEnvWithDefault("EVENT_LOGGING_TRIM", 5),
   gatekeeper: getEnvWithDefault("GATEKEEPER", "none"),
   gatekeeperStore: getEnvWithDefault("GATEKEEPER_STORE", "memory"),
   maxIpsPerUser: getEnvWithDefault("MAX_IPS_PER_USER", 0),
-  maxIpsAutoBan: getEnvWithDefault("MAX_IPS_AUTO_BAN", true),
+  maxIpsAutoBan: getEnvWithDefault("MAX_IPS_AUTO_BAN", false),
+  captchaMode: getEnvWithDefault("CAPTCHA_MODE", "none"),
+  powTokenHours: getEnvWithDefault("POW_TOKEN_HOURS", 24),
+  powTokenMaxIps: getEnvWithDefault("POW_TOKEN_MAX_IPS", 2),
+  powDifficultyLevel: getEnvWithDefault("POW_DIFFICULTY_LEVEL", "low"),
+  powChallengeTimeout: getEnvWithDefault("POW_CHALLENGE_TIMEOUT", 30),
+  powTokenPurgeHours: getEnvWithDefault("POW_TOKEN_PURGE_HOURS", 48),
   firebaseRtdbUrl: getEnvWithDefault("FIREBASE_RTDB_URL", undefined),
   firebaseKey: getEnvWithDefault("FIREBASE_KEY", undefined),
   textModelRateLimit: getEnvWithDefault("TEXT_MODEL_RATE_LIMIT", 4),
@@ -306,6 +420,7 @@ export const config: Config = {
     "gpt4",
     "gpt4-32k",
     "gpt4-turbo",
+    "gpt4o",
     "claude",
     "claude-opus",
     "gemini-pro",
@@ -317,8 +432,9 @@ export const config: Config = {
     "aws-claude-opus",
     "azure-turbo",
     "azure-gpt4",
-    "azure-gpt4-turbo",
     "azure-gpt4-32k",
+    "azure-gpt4-turbo",
+    "azure-gpt4o",
   ]),
   rejectPhrases: parseCsv(getEnvWithDefault("REJECT_PHRASES", "")),
   rejectMessage: getEnvWithDefault(
@@ -365,19 +481,44 @@ export const config: Config = {
   allowOpenAIToolUsage: getEnvWithDefault("ALLOW_OPENAI_TOOL_USAGE", false),
   allowImagePrompts: getEnvWithDefault("ALLOW_IMAGE_PROMPTS", false),
   proxyEndpointRoute: getEnvWithDefault("PROXY_ENDPOINT_ROUTE", "/proxy"),
+  adminWhitelist: parseCsv(getEnvWithDefault("ADMIN_WHITELIST", "0.0.0.0/0")),
+  ipBlacklist: parseCsv(getEnvWithDefault("IP_BLACKLIST", "")),
 } as const;
 
-function generateCookieSecret() {
+function generateSigningKey() {
   if (process.env.COOKIE_SECRET !== undefined) {
+    // legacy, replaced by SIGNING_KEY
     return process.env.COOKIE_SECRET;
+  } else if (process.env.SIGNING_KEY !== undefined) {
+    return process.env.SIGNING_KEY;
   }
 
-  const seed = "" + config.adminKey + config.openaiKey + config.anthropicKey;
-  const crypto = require("crypto");
+  const secrets = [
+    config.adminKey,
+    config.openaiKey,
+    config.anthropicKey,
+    config.googleAIKey,
+    config.mistralAIKey,
+    config.awsCredentials,
+    config.azureCredentials,
+  ];
+  if (secrets.filter((s) => s).length === 0) {
+    startupLogger.warn(
+      "No SIGNING_KEY or secrets are set. All sessions, cookies, and proofs of work will be invalidated on restart."
+    );
+    return crypto.randomBytes(32).toString("hex");
+  }
+
+  startupLogger.info("No SIGNING_KEY set; one will be generated from secrets.");
+  startupLogger.info(
+    "It's recommended to set SIGNING_KEY explicitly to ensure users' sessions and cookies always persist across restarts."
+  );
+  const seed = secrets.map((s) => s || "n/a").join("");
   return crypto.createHash("sha256").update(seed).digest("hex");
 }
 
-export const COOKIE_SECRET = generateCookieSecret();
+const signingKey = generateSigningKey();
+export const COOKIE_SECRET = signingKey;
 
 export async function assertConfigIsValid() {
   if (process.env.MODEL_RATE_LIMIT !== undefined) {
@@ -411,15 +552,32 @@ export async function assertConfigIsValid() {
     );
   }
 
-  if (config.gatekeeper === "proxy_key" && !config.proxyKey) {
+  if (
+    config.captchaMode === "proof_of_work" &&
+    config.gatekeeper !== "user_token"
+  ) {
     throw new Error(
-      "`proxy_key` gatekeeper mode requires a `PROXY_KEY` to be set."
+      "Captcha mode 'proof_of_work' requires gatekeeper mode 'user_token'."
     );
   }
 
-  if (config.gatekeeper !== "proxy_key" && config.proxyKey) {
+  if (config.captchaMode === "proof_of_work") {
+    const val = config.powDifficultyLevel;
+    const isDifficulty =
+      typeof val === "string" &&
+      ["low", "medium", "high", "extreme"].includes(val);
+    const isIterations =
+      typeof val === "number" && Number.isInteger(val) && val > 0;
+    if (!isDifficulty && !isIterations) {
+      throw new Error(
+        "Invalid POW_DIFFICULTY_LEVEL. Must be one of: low, medium, high, extreme, or a positive integer."
+      );
+    }
+  }
+
+  if (config.gatekeeper === "proxy_key" && !config.proxyKey) {
     throw new Error(
-      "`PROXY_KEY` is set, but gatekeeper mode is not `proxy_key`. Make sure to set `GATEKEEPER=proxy_key`."
+      "`proxy_key` gatekeeper mode requires a `PROXY_KEY` to be set."
     );
   }
 
@@ -479,6 +637,9 @@ export const OMITTED_KEYS = [
   "googleSheetsKey",
   "firebaseKey",
   "firebaseRtdbUrl",
+  "sqliteDataPath",
+  "eventLogging",
+  "eventLoggingTrim",
   "gatekeeperStore",
   "maxIpsPerUser",
   "blockedOrigins",
@@ -492,6 +653,9 @@ export const OMITTED_KEYS = [
   "allowedModelFamilies",
   "trustedProxies",
   "proxyEndpointRoute",
+  "adminWhitelist",
+  "ipBlacklist",
+  "powTokenPurgeHours",
 ] satisfies (keyof Config)[];
 type OmitKeys = (typeof OMITTED_KEYS)[number];
 
