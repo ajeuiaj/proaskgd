@@ -1,0 +1,15 @@
+services:
+- type: web
+  name: abcd
+  runtime: docker
+  repo: https://github.com/ajeuiaj/proaskgd
+  plan: free
+  envVars:
+  - key: .env
+    sync: false
+  region: oregon
+  healthCheckPath: /health
+  dockerContext: .
+  dockerfilePath: ./docker/render/Dockerfile
+  autoDeploy: false
+version: "1"
